@@ -1,0 +1,6 @@
+.env
+__pycache__/
+.idea/
+.claude/settings.local.json
+.codex/config.toml
+/data

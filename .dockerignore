@@ -1,0 +1,9 @@
+.git
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+.env
+.idea
+.claude
+.codex

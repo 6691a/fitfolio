@@ -1,0 +1,77 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: fitfolio
+      POSTGRES_USER: fitfolio
+      POSTGRES_PASSWORD: fitfolio
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitfolio -d fitfolio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - api-venv:/app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: uv run celery -A app.celery_app worker --loglevel=info -P threads --concurrency=2
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - api-venv:/app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  front:
+    build: .
+    command: uv run python -m streamlit run streamlit_app/main.py --server.address 0.0.0.0
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - front-venv:/app/.venv
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  api-venv:
+  front-venv:
