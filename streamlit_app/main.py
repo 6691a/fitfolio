@@ -80,17 +80,28 @@ button_slot = st.empty()
 
 
 def fetch_parse_result(document_id: int) -> dict | None:
+    """문서 파싱이 끝날 때까지 상태를 폴링해 결과를 가져온다.
+
+    Args:
+        document_id: 상태를 폴링할 문서 ID.
+
+    Returns:
+        파싱 완료 시 추출 결과 dict, 결과가 없으면 None.
+
+    Raises:
+        RuntimeError: 문서 파싱이 실패 상태로 끝난 경우.
+    """
     while True:
         status_response = httpx.get(
             f"{f_settings.API_BASE_URL}/documents/parse/{document_id}",
-            timeout=30,
+            timeout=60,
         )
         job = ParseJobStatus.model_validate_json(status_response.content)
         if job.status == "done":
             return job.result.model_dump(mode="json") if job.result else None
         if job.status == "failed":
             raise RuntimeError(job.error or "문서 분석에 실패했습니다")
-        time.sleep(1)
+        time.sleep(f_settings.PARSE_POLL_INTERVAL_SECONDS)
 
 
 if button_slot.button("분석 시작", type="primary", disabled=not ready or is_requesting):

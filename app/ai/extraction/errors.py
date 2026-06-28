@@ -1,0 +1,2 @@
+class StructuredExtractionError(Exception):
+    pass

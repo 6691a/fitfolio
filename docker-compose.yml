@@ -29,13 +29,8 @@ services:
     build: .
     env_file:
       - .env
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app
-      - api-venv:/app/.venv
     depends_on:
       db:
         condition: service_healthy
@@ -47,9 +42,6 @@ services:
     command: uv run celery -A app.celery_app worker --loglevel=info -P threads --concurrency=2
     env_file:
       - .env
-    volumes:
-      - .:/app
-      - api-venv:/app/.venv
     depends_on:
       db:
         condition: service_healthy
@@ -65,13 +57,8 @@ services:
       API_BASE_URL: http://api:8000
     ports:
       - "8501:8501"
-    volumes:
-      - .:/app
-      - front-venv:/app/.venv
     depends_on:
       - api
 
 volumes:
   pgdata:
-  api-venv:
-  front-venv:

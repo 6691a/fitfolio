@@ -1,0 +1,2 @@
+class DocumentClassificationError(Exception):
+    pass

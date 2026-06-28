@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 
 from dependency_injector.wiring import Provide, inject
 
@@ -7,45 +8,16 @@ from app.config.containers import Container
 from app.database.session import Database
 from app.repositories.documents import DocumentsRepository
 from app.repositories.profiles import ProfilesRepository
-from app.schemas.documents import DocumentFormat, DocumentInput, DocumentKind, FileInput, ParsedDocument, UrlInput
-from app.schemas.profiles import JobPostingProfileData, ResumeProfileData
 from app.services.document import DocumentService
-from app.services.profiles import build_profile_data
-
-
-def _build_document_input(document) -> DocumentInput:
-    document_format = DocumentFormat(document.format)
-    match document_format:
-        case DocumentFormat.URL:
-            return UrlInput(
-                document_type=document.document_type,
-                input_type=DocumentFormat.URL,
-                url=document.source_url,
-            )
-        case DocumentFormat.PDF | DocumentFormat.DOCX | DocumentFormat.IMAGE | DocumentFormat.PPT:
-            return FileInput(
-                document_type=document.document_type,
-                input_type=document_format,
-                file_path=document.file_path,
-                file_name=document.file_name,
-                content_type=document.content_type,
-            )
-
-    raise ValueError(f"Unsupported document format: {document_format}")
-
-
-async def _store_profile(profiles_repository: ProfilesRepository, document, parsed: ParsedDocument) -> None:
-    profile = build_profile_data(DocumentKind(document.document_type), parsed)
-    if isinstance(profile, ResumeProfileData):
-        await profiles_repository.upsert_resume_profile(document_id=document.id, profile=profile)
-        return
-
-    if isinstance(profile, JobPostingProfileData):
-        await profiles_repository.upsert_job_posting_profile(document_id=document.id, profile=profile)
 
 
 @celery_app.task(name="documents.parse")
 def task_parse_document(document_id: int) -> None:
+    """문서 파싱 Celery 태스크 진입점. 비동기 파싱을 동기 워커에서 실행한다.
+
+    Args:
+        document_id: 파싱할 문서의 ID.
+    """
     asyncio.run(_parse_document(document_id))
 
 
@@ -53,30 +25,21 @@ def task_parse_document(document_id: int) -> None:
 async def _parse_document(
     document_id: int,
     database: Database = Provide[Container.worker_database],
+    build_document_service: Callable[..., DocumentService] = Provide[Container.document_service.provider],
 ) -> None:
-    try:
-        documents_repository = DocumentsRepository(session_factory=database.async_session)
-        profiles_repository = ProfilesRepository(session_factory=database.async_session)
-        document_service = DocumentService(documents_repository=documents_repository)
+    """워커용 DB/레포지토리로 서비스를 구성해 문서 파싱을 수행한다.
 
-        document = await documents_repository.get(document_id)
-        if document is None:
-            return
-
-        await documents_repository.mark_started(document_id)
-
-        document_input = _build_document_input(document)
-
-        try:
-            parsed = await document_service.parse(document_input)
-        except Exception as exc:
-            await documents_repository.mark_failed(document_id, error=str(exc))
-        else:
-            await documents_repository.mark_done(
-                document_id,
-                extracted_text=parsed.extracted_text,
-                metadata=parsed.metadata,
-            )
-            await _store_profile(profiles_repository, document, parsed)
-    finally:
-        await database.dispose()
+    Args:
+        document_id: 파싱할 문서의 ID.
+        database: 컨테이너가 주입하는 워커 전용 Database(태스크마다 새로 생성).
+        build_document_service: 컨테이너의 document_service provider. 레포지토리만
+            워커 세션 기반으로 덮어써서 서비스를 만든다.
+    """
+    async with database:
+        # 워커는 worker_database(Factory)로 세션을 만들어야 해서 repo는 직접 구성하고,
+        # crawler/classifier 배선은 컨테이너의 document_service provider에 위임한다.
+        document_service = build_document_service(
+            documents_repository=DocumentsRepository(session_factory=database.async_session),
+            profiles_repository=ProfilesRepository(session_factory=database.async_session),
+        )
+        await document_service.process(document_id)

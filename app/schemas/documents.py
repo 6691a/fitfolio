@@ -76,6 +76,56 @@ class ParsedDocument(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class DocumentClassification(BaseModel):
+    expected_kind: DocumentKind
+    detected_kind: DocumentKind | Literal["unknown"]
+    is_expected: bool
+    confidence: float = Field(ge=0, le=1)
+    failure_reason: str | None = None
+
+
+class JobPostingImage(BaseModel):
+    src: str
+    alt: str = ""
+    text: str | None = None
+
+
+class JobPostingExtractDebug(BaseModel):
+    source: str
+    relevant: bool = True
+    failure_reason: str | None = None
+    detail_url: str | None = None
+    title: str | None = None
+    position: str | None = None
+    text: str
+    work_location: str | None = None
+    application_start_date: str | None = None
+    application_end_date: str | None = None
+    application_method: str | None = None
+    image_urls: list[JobPostingImage] = Field(default_factory=list)
+    html: str | None = None
+    raw: dict | None = None
+
+
+class ResumeExtractDebug(BaseModel):
+    source: str = "resume"
+    relevant: bool = True
+    failure_reason: str | None = None
+    text: str
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    self_introduction: str | None = None
+    career_summary: str | None = None
+    work_experiences: list[dict | str] = Field(default_factory=list)
+    projects: list[dict | str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    education: list[dict | str] = Field(default_factory=list)
+    certifications: list[dict | str] = Field(default_factory=list)
+    image_texts: list[str] = Field(default_factory=list)
+    raw_sections: dict = Field(default_factory=dict)
+
+
 class ParseJobAccepted(BaseModel):
     document_id: int
 

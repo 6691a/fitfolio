@@ -1,0 +1,30 @@
+# 로컬 개발 전용 오버레이. base(docker-compose.yml) 위에 코드 변경 시
+# 자동 재시작(watchfiles/reload)과 소스 바인드 마운트를 얹는다.
+# 자동 병합되지 않으므로 base와 함께 명시적으로 지정해서 실행한다:
+#   docker compose -f docker-compose.yml -f compose.local.yml up
+# 실 배포는 별도 compose 파일을 사용한다.
+services:
+  api:
+    command: uv run fastapi run app/main.py --host 0.0.0.0 --port 8000 --reload
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - .:/app
+      - api-venv:/app/.venv
+
+  worker:
+    command: uv run watchfiles "celery -A app.celery_app worker --loglevel=info -P threads --concurrency=2" app
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - .:/app
+      - api-venv:/app/.venv
+
+  front:
+    volumes:
+      - .:/app
+      - front-venv:/app/.venv
+
+volumes:
+  api-venv:
+  front-venv:
