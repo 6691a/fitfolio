@@ -11,6 +11,16 @@ class Settings(BaseSettings):
     MAX_PDF_BYTES: int = 20 * 1024 * 1024
     STRUCTURED_EXTRACT_MODEL: str = "gemini-2.5-flash"
     DOCUMENT_CLASSIFIER_MODEL: str = "gemini-2.5-flash"
+    EMBEDDING_MODEL: str = "models/gemini-embedding-001"
+    EMBEDDING_DIM: int = 1024
+    EMBEDDING_DOCUMENT_TASK_TYPE: str = "RETRIEVAL_DOCUMENT"
+    EMBEDDING_QUERY_TASK_TYPE: str = "RETRIEVAL_QUERY"
+    TIME_ZONE: str = "Asia/Seoul"
+    JOB_POSTING_DEFAULT_TIMEZONE: str = "Asia/Seoul"
+    # Langfuse 트레이싱. 키가 비면 핸들러가 None이 되어 트레이싱이 꺼진다.
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_BASE_URL: str = "http://localhost:3000"
     DOCUMENT_MIN_EXTRACTED_CHARS: int = 200
     DOCUMENT_MAX_EXTRACTED_CHARS: int = 80_000
     DOCUMENT_URL_TIMEOUT_MS: int = 30_000

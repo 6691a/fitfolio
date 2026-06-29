@@ -1,5 +1,5 @@
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 
 from app.config.containers import Container
 from app.schemas.documents import (
@@ -7,6 +7,7 @@ from app.schemas.documents import (
     ParseApplicationAccepted,
     ParseJobStatus,
 )
+from app.schemas.profiles import JobPostingSearchResult
 from app.security.job_domains import is_allowed_job_domain
 from app.services.document import DocumentService
 
@@ -68,6 +69,26 @@ async def parse_document(
         job_posting_url=job_posting_url,
         job_posting_text=job_posting_text,
     )
+
+
+@router.get("/job-postings/search", response_model=list[JobPostingSearchResult])
+@inject
+async def search_job_postings(
+    q: str = Query(..., min_length=1, description="검색어(기술스택·회사명 등)"),
+    limit: int = Query(10, ge=1, le=50),
+    document: DocumentService = Depends(Provide[Container.document_service]),
+):
+    """업로드된 채용공고를 의미 기반으로 검색해 유사도 순으로 반환한다.
+
+    Args:
+        q: 검색어.
+        limit: 최대 결과 수(1~50).
+        document: 컨테이너가 주입하는 DocumentService.
+
+    Returns:
+        유사도 순 채용공고 검색 결과 목록.
+    """
+    return await document.search_job_postings(q, limit)
 
 
 @router.get("/parse/{document_id}", response_model=ParseJobStatus)

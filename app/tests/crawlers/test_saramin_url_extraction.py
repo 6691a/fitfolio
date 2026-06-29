@@ -11,7 +11,8 @@ from app.crawlers import utils as utils_module
 from app.crawlers.saramin import SaraminJobPostingCrawler
 from app.config.containers import Container
 from app.schemas.documents import DocumentFormat, DocumentKind, JobPostingExtractDebug, UrlInput
-from app.services.document import DocumentService, InsufficientJobContentError
+from app.services.document import DocumentService
+from app.services.errors import InsufficientJobContentError
 
 
 def _png_bytes(width: int, height: int) -> bytes:

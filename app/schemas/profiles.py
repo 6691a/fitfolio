@@ -1,8 +1,17 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+
+from pydantic import BaseModel, Field, field_serializer
+
+from app.config.settings import settings
+from app.utils import serialize_datetime_in_timezone
 
 
 class ResumeProfileData(BaseModel):
-    raw_text: str
+    document_text: str
+    image_text: str = ""
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
     self_introduction: str | None = None
     career_summary: str | None = None
     work_experiences: list[dict | str] = Field(default_factory=list)
@@ -14,15 +23,16 @@ class ResumeProfileData(BaseModel):
 
 
 class JobPostingProfileData(BaseModel):
-    raw_text: str
+    document_text: str
+    image_text: str = ""
     company_name: str | None = None
     title: str | None = None
     location: str | None = None
     employment_type: str | None = None
     career_requirement: str | None = None
     education_requirement: str | None = None
-    opening_period: str | None = None
-    deadline: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
     responsibilities: list[str] = Field(default_factory=list)
     qualifications: list[str] = Field(default_factory=list)
     preferred_qualifications: list[str] = Field(default_factory=list)
@@ -30,5 +40,21 @@ class JobPostingProfileData(BaseModel):
     source_url: str | None = None
     raw_sections: dict = Field(default_factory=dict)
 
+    @field_serializer("start_date", "end_date", when_used="json")
+    def serialize_response_datetime(self, value: datetime | None) -> str | None:
+        """API 응답에서는 설정 timezone으로 변환해 직렬화한다.
+
+        DB 저장 경로의 `model_dump()`는 python mode라 UTC datetime을 그대로 유지한다.
+        """
+        return serialize_datetime_in_timezone(value, timezone=settings.TIME_ZONE)
+
 
 ProfileData = ResumeProfileData | JobPostingProfileData
+
+
+class JobPostingSearchResult(BaseModel):
+    document_id: int
+    company_name: str | None = None
+    title: str | None = None
+    source_url: str | None = None
+    score: float

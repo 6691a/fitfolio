@@ -63,10 +63,19 @@ app/
 - repositories는 DB 접근만 담당한다.
 
 ### 예외 처리
-- 도메인 예외는 서비스에서 던진다(`UnsupportedDocumentFormatError`, `FileTooLargeError`, `DocumentFileParseError`, `InsufficientJobContentError`). 서비스는 `HTTPException`을 만들지 않는다(FastAPI 결합 제거).
+- 도메인 예외는 `app/services/errors.py`에 모아 정의하고 서비스에서 던진다(`UnsupportedDocumentFormatError`, `FileTooLargeError`, `DocumentFileParseError`, `InsufficientJobContentError`, `EmbeddingUnavailableError`). 서비스는 `HTTPException`을 만들지 않는다(FastAPI 결합 제거). import는 `from app.services.errors import ...`를 쓴다(`app.services.document` 재노출에 의존하지 않는다).
 - HTTP 상태 매핑은 `app/main.py`의 전역 예외 핸들러(`_DOMAIN_EXCEPTION_STATUS`)에서 한 곳에 모은다. 새 도메인 예외를 추가하면 이 매핑에 상태코드를 등록한다.
 - 컨트롤러는 요청 단위 입력 검증과 404(리소스 없음)에만 `HTTPException`을 쓴다.
 - HTTP 상태코드는 raw 숫자(예: `422`)가 아니라 `fastapi.status` 상수(예: `status.HTTP_422_UNPROCESSABLE_ENTITY`)를 사용한다. 코드·테스트 모두 동일하게 적용한다.
+
+#### 실패 처리 · 로깅 정책 (중요)
+- **실패를 조용히 삼키지 않는다.** `except`로 폴백(기본값 반환·`None`·빈 결과·`pass`)하는 경로는 **반드시 원인을 로깅**한다. 최소 `logger.warning("...: error=%s", exc)`로 무엇이/왜 실패했는지 남긴다. fail-soft(전체를 막지 않으려 폴백)는 허용하지만, "조용한 fail-soft"는 금지다.
+- 성공 경로의 결과/요청 로그는 Langfuse 트레이스가 담당하므로 중복 로깅하지 않는다. **로깅은 실패·폴백 경로의 책임**이다(예: AI 구조화 실패 후 규칙 폴백, 비전/임베딩 호출 실패, 크롤러 폴백). Langfuse가 닿지 않는 경로(임베딩 등)의 실패는 특히 반드시 로깅한다.
+- 기대 가능한 단건 스킵(예: 이미지 한 장 HTTP 실패 후 `continue`)은 과도하지 않게 info/debug로 남기고, 외부 서비스(AI/임베딩/크롤링) 호출 실패처럼 진단이 필요한 실패는 warning 이상으로 남긴다.
+- **사용자 응답이 있는 API는 실패를 500이 아닌 의미 있는 상태코드로 돌려준다.** 폴백으로 빈 결과를 주면 "실패"가 "결과 없음"으로 오인되는 경우(예: 검색 임베딩 실패)에는 도메인 예외를 던져 적절한 4xx/5xx로 매핑한다(예: `EmbeddingUnavailableError` → 503). 서비스는 `HTTPException`을 만들지 않고 도메인 예외를 던지며, 상태 매핑은 `_DOMAIN_EXCEPTION_STATUS`에 등록한다.
+- **500은 코딩된(예상 가능한) 실패에 쓰지 않는다.** 우리가 인지하는 실패 조건은 전부 도메인 예외 → 4xx/5xx로 매핑하고, 500은 *예기치 못한* 예외에만 남긴다. `app/main.py`의 catch-all 핸들러(`handle_unexpected_error`)가 매핑되지 않은 예외를 `logger.exception`(트레이스백 포함)으로 남기고 일반화된 500 JSON으로 응답한다 — 내부 예외 메시지는 사용자에게 노출하지 않는다. 새로 알게 된 실패 조건은 catch-all 500에 방치하지 말고 도메인 예외로 승격한다.
+- 핸들러 로깅 레벨: 5xx(서버 책임)는 `error`/`exception`으로 남겨 개발자가 즉시 인지·수정하게 하고, 4xx(클라이언트 입력)는 `info`로 남겨 노이즈를 분리한다.
+
 - 모든 의존 객체는 `app.config.containers.Container`로 주입한다. 서비스 생성자/메서드에서 인프라·크롤러를 직접 생성하지 않는다.
 - 인프라는 얇은 래퍼 클래스 + `providers.Singleton(클래스)` 방식으로 등록한다(예: `Database`, `RedisCache`). `providers.Resource`(제너레이터) 대신 클래스 방식을 쓴다.
 - 워커는 이벤트 루프 문제로 `worker_database`(Factory, 태스크마다 새 인스턴스)를 사용한다. 서비스는 컨테이너의 `document_service` provider로 조립하되, 세션에 묶인 repo만 호출 시점에 덮어쓴다(`Provide[Container.document_service.provider]`).

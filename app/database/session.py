@@ -14,6 +14,8 @@ class Database:
             pool_size: 커넥션 풀의 기본 연결 수.
             max_overflow: 풀을 초과해 추가로 열 수 있는 연결 수.
         """
+        # pgvector의 vector 컬럼 인/디코딩은 pgvector.sqlalchemy.Vector 타입이 텍스트로 처리한다.
+        # asyncpg에 register_vector를 걸면 bind 단계에서 이중 인코딩되어 DataError가 나므로 쓰지 않는다.
         self._engine = create_async_engine(settings.DATABASE_URL, pool_size=pool_size, max_overflow=max_overflow)
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 

@@ -6,7 +6,8 @@ from app.schemas.documents import DocumentFormat, DocumentKind, JobPostingExtrac
 from app.crawlers import job_postings as crawler_module
 from app.crawlers import utils as utils_module
 from app.config.containers import Container
-from app.services.document import DocumentService, InsufficientJobContentError
+from app.services.document import DocumentService
+from app.services.errors import InsufficientJobContentError
 
 
 class FakeResponse:

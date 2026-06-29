@@ -41,7 +41,7 @@ def _file_input(path: str) -> FileInput:
 async def _run(path: str, stub: ImageContent) -> tuple[str, int, int, list[str]]:
     calls = 0
 
-    async def fake_extract(image_bytes, mime, kind):
+    async def fake_extract(image_bytes, mime, kind, langfuse_handler=None):
         nonlocal calls
         calls += 1
         return stub

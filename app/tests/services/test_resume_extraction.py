@@ -8,13 +8,14 @@ from app.schemas.documents import (
     DocumentFormat,
     DocumentKind,
     FileInput,
+    JobPostingExtractDebug,
     ResumeExtractDebug,
     TextInput,
 )
 from app.services import document as document_module
-from app.services.document import (
+from app.services.document import DocumentService
+from app.services.errors import (
     DocumentFileParseError,
-    DocumentService,
     InsufficientJobContentError,
     UnsupportedDocumentFormatError,
 )
@@ -212,3 +213,58 @@ def test_resume_text_parse_fails_when_llm_says_irrelevant(monkeypatch, tmp_path:
         assert "이력서가 아닌 안내문입니다." in str(exc)
     else:
         raise AssertionError("irrelevant resume text should fail")
+
+
+JOB_POSTING_PDF_TEXT = """
+마인즈그라운드(주) 백엔드 개발자 채용
+
+주요 업무
+- API 설계 및 운영
+
+자격 요건
+- Python 3년 이상
+
+근무지: 서울 서초구
+"""
+
+
+async def fake_job_posting_structured(text, fallback):
+    # AI가 본문 text를 받아 채용공고 필드를 채운 결과를 흉내낸다.
+    return JobPostingExtractDebug(
+        source=fallback.source,
+        text=text,
+        company_name="마인즈그라운드(주)",
+        title="백엔드 개발자 채용",
+        work_location="서울 서초구",
+        responsibilities=["API 설계 및 운영"],
+        qualifications=["Python 3년 이상"],
+    )
+
+
+def test_job_posting_pdf_parse_includes_structured_extract_metadata(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(document_module, "_DEBUG_IMAGE_DIR", tmp_path)
+    monkeypatch.setattr(document_module, "extract_job_posting_structured", fake_job_posting_structured)
+
+    pdf_path = tmp_path / "job.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), JOB_POSTING_PDF_TEXT)
+    doc.save(pdf_path)
+    doc.close()
+
+    parsed = asyncio.run(
+        DocumentService(documents_repository=None).pdf_to_text(  # type: ignore[arg-type]
+            FileInput(
+                document_type=DocumentKind.JOB_POSTING,
+                input_type=DocumentFormat.PDF,
+                file_path=str(pdf_path),
+                file_name="job.pdf",
+                content_type="application/pdf",
+            )
+        )
+    )
+
+    debug = JobPostingExtractDebug.model_validate(parsed.metadata["job_posting_extract"])
+    assert debug.source == "pdf"
+    assert debug.company_name == "마인즈그라운드(주)"
+    assert debug.qualifications == ["Python 3년 이상"]

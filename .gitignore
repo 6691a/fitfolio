@@ -1,4 +1,5 @@
 .env
+.env.langfuse
 __pycache__/
 .idea/
 .claude/settings.local.json

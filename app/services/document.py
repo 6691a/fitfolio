@@ -18,6 +18,7 @@ from app.ai.extraction import (
     extract_job_posting_structured,
     extract_resume_structured,
 )
+from app.ai.embeddings import embed_document, embed_query
 from app.ai.vision import extract_image_content
 from app.config.settings import settings
 from app.crawlers.job_postings import JobPostingCrawler
@@ -38,9 +39,16 @@ from app.schemas.documents import (
     TextInput,
     UrlInput,
 )
-from app.schemas.profiles import JobPostingProfileData, ResumeProfileData
-from app.services.profiles import build_profile_data
-from app.utils import clean_text
+from app.schemas.profiles import JobPostingProfileData, JobPostingSearchResult, ResumeProfileData
+from app.services.errors import (
+    DocumentFileParseError,
+    EmbeddingUnavailableError,
+    FileTooLargeError,
+    InsufficientJobContentError,
+    UnsupportedDocumentFormatError,
+)
+from app.services.profiles import build_job_posting_search_text, build_profile_data
+from app.utils import clean_text, normalize_url
 
 _UPLOAD_SUBDIRS: dict[DocumentKind, str] = {
     DocumentKind.RESUME: "resumes",
@@ -51,22 +59,6 @@ logger = logging.getLogger(__name__)
 
 # 디버그: 비전에 보낼 이미지를 디스크에 저장.
 _DEBUG_IMAGE_DIR = settings.UPLOAD_DIR / settings.DOCUMENT_DEBUG_IMAGE_SUBDIR
-
-
-class DocumentFileParseError(Exception):
-    pass
-
-
-class UnsupportedDocumentFormatError(Exception):
-    pass
-
-
-class InsufficientJobContentError(Exception):
-    pass
-
-
-class FileTooLargeError(Exception):
-    pass
 
 
 class DocumentService:
@@ -258,6 +250,55 @@ class DocumentService:
 
         if isinstance(profile, JobPostingProfileData):
             await self._profiles_repository.upsert_job_posting_profile(document_id=document.id, profile=profile)
+            await self._embed_job_posting(document.id, profile)
+
+    async def _embed_job_posting(self, document_id: int, profile: JobPostingProfileData) -> None:
+        """채용공고 프로필을 임베딩해 검색용 벡터로 저장한다(fail-soft).
+
+        Args:
+            document_id: 임베딩을 저장할 채용공고 문서 ID.
+            profile: 임베딩 입력 텍스트를 만들 채용공고 프로필.
+        """
+        if self._profiles_repository is None:
+            return
+        embedding = await embed_document(build_job_posting_search_text(profile))
+        if embedding is not None:
+            await self._profiles_repository.set_job_posting_embedding(document_id=document_id, embedding=embedding)
+
+    async def search_job_postings(self, query: str, limit: int = 10) -> list[JobPostingSearchResult]:
+        """질의를 임베딩해 의미적으로 가까운 채용공고를 검색한다.
+
+        Args:
+            query: 검색어(기술스택·회사명 등).
+            limit: 최대 결과 수.
+
+        Returns:
+            유사도 순 채용공고 검색 결과.
+
+        Raises:
+            RuntimeError: 프로필 레포지토리가 주입되지 않은 경우.
+            EmbeddingUnavailableError: 검색어 임베딩 생성에 실패한 경우(503 매핑).
+        """
+        if self._profiles_repository is None:
+            raise RuntimeError("ProfilesRepository must be injected through Container.profiles_repository")
+
+        embedding = await embed_query(query)
+        if embedding is None:
+            # 조용히 빈 결과를 주면 "검색 실패"가 "결과 없음"으로 오인된다 — 명시적으로 실패를 알린다.
+            logger.warning("채용공고 검색 임베딩 생성 실패 query_len=%d", len(query))
+            raise EmbeddingUnavailableError("검색 기능을 잠시 사용할 수 없습니다. 잠시 후 다시 시도해주세요.")
+
+        rows = await self._profiles_repository.search_job_postings(embedding=embedding, limit=limit)
+        return [
+            JobPostingSearchResult(
+                document_id=profile.document_id,
+                company_name=profile.company_name,
+                title=profile.title,
+                source_url=profile.source_url,
+                score=round(1.0 - distance, 4),
+            )
+            for profile, distance in rows
+        ]
 
     async def get_parse_status(self, document_id: int) -> ParseJobStatus | None:
         """문서 파싱 진행 상태를 조회하고 완료 시 결과까지 만들어 반환한다.
@@ -401,13 +442,22 @@ class DocumentService:
         """
         from app.tasks.documents import task_parse_document
 
-        record = await self._documents_repository.create(
+        # 같은 URL이 이미 처리 중이거나 완료돼 있으면 중복 파싱 없이 기존 문서를 재사용한다.
+        normalized_url = normalize_url(url)
+        existing = await self._documents_repository.find_reusable_by_source_url(
             document_type=document_type,
-            format=DocumentFormat.URL,
-            source_url=url,
+            source_url=normalized_url,
         )
-        task_parse_document.delay(record.id)
-        return record.id
+        if existing is not None:
+            return existing.id
+
+        result = await self._documents_repository.create_url_or_get_reusable(
+            document_type=document_type,
+            source_url=normalized_url,
+        )
+        if result.created:
+            task_parse_document.delay(result.document.id)
+        return result.document.id
 
     async def request_parse_text(self, *, document_type: DocumentKind, text: str) -> int:
         """텍스트 문서 레코드를 만들고 비동기 파싱 작업을 큐에 등록한다.
@@ -599,14 +649,15 @@ class DocumentService:
                 "PDF 파일을 읽지 못했습니다. 실제 PDF 파일인지 확인한 뒤 다시 업로드해주세요."
             ) from exc
 
-        text = "\n\n".join(pages)
+        body_text = "\n\n".join(pages)
+        text = body_text
         if image_texts:
             text += "\n\n" + "\n\n".join(image_texts)
 
         return ParsedDocument(
             original_input=input,
             extracted_text=text,
-            metadata=await self._file_metadata(input, text, len(pages), image_texts),
+            metadata=await self._file_metadata(input, body_text, len(pages), image_texts),
         )
 
     async def docx_to_text(self, input: FileInput) -> ParsedDocument:
@@ -708,8 +759,9 @@ class DocumentService:
         Raises:
             InsufficientJobContentError: 추출 텍스트가 최소 길이에 못 미칠 때.
         """
-        normalized = text.strip()
+        document_text = text.strip()
         image_texts = image_texts or []
+        normalized = document_text
         if image_texts:
             normalized = (normalized + "\n\n" + "\n\n".join(image_texts)).strip()
 
@@ -724,7 +776,7 @@ class DocumentService:
             extracted_text=truncated,
             metadata=self._url_metadata(
                 input,
-                truncated,
+                document_text,
                 image_texts,
                 structured_debug,
             ),
@@ -733,25 +785,28 @@ class DocumentService:
     def _url_metadata(
         self,
         input: UrlInput,
-        text: str,
+        document_text: str,
         image_texts: list[str],
         structured_debug: JobPostingExtractDebug | None = None,
     ) -> dict:
-        """URL 채용공고용 메타데이터(원문 URL·글자 수·구조화 결과)를 만든다.
+        """URL 채용공고용 메타데이터(원문 URL·본문/이미지 텍스트·구조화 결과)를 만든다.
 
         Args:
             input: 원본 채용공고 URL 입력.
-            text: 추출 본문 텍스트.
+            document_text: 페이지 본문에서 추출한 텍스트(이미지 OCR 제외).
             image_texts: 이미지에서 추출한 보조 텍스트들.
             structured_debug: 구조화 추출 디버그 정보(있으면 포함).
 
         Returns:
-            메타데이터 dict.
+            메타데이터 dict(document_text/image_text 포함).
         """
+        image_text = "\n\n".join(image_texts)
         metadata: dict[str, object] = {
             "source_url": str(input.url),
-            "char_count": len(text),
+            "char_count": len(document_text) + len(image_text),
             "image_text_count": len(image_texts),
+            "document_text": document_text,
+            "image_text": image_text,
         }
         if structured_debug is not None:
             metadata["job_posting_extract"] = structured_debug.model_dump(
@@ -760,22 +815,35 @@ class DocumentService:
             )
         return metadata
 
-    async def _file_metadata(self, input: FileInput, text: str, page_count: int, image_texts: list[str]) -> dict:
-        """파일 문서 메타데이터를 만들고 이력서면 구조화 추출을 포함한다.
+    async def _file_metadata(self, input: FileInput, body_text: str, page_count: int, image_texts: list[str]) -> dict:
+        """파일 문서 메타데이터를 만들고 종류별 구조화 추출을 포함한다.
 
         Args:
             input: 원본 파일 입력.
-            text: 추출 본문 텍스트.
+            body_text: 문서 본문에서 추출한 텍스트(이미지 OCR 제외).
             page_count: 페이지 수(페이지 개념이 없으면 0).
             image_texts: 이미지에서 추출한 보조 텍스트들.
 
         Returns:
-            메타데이터 dict(이력서면 resume_extract 포함).
+            메타데이터 dict(이력서면 resume_extract, 채용공고면 job_posting_extract + document/image_text 포함).
         """
+        image_text = "\n\n".join(image_texts)
+        combined = f"{body_text}\n\n{image_text}".strip() if image_text else body_text
         metadata: dict[str, object] = {"page_count": page_count, "image_text_count": len(image_texts)}
         if input.document_type == DocumentKind.RESUME:
-            payload = await self._resume_structured_payload(text, image_texts)
+            payload = await self._resume_structured_payload(combined, image_texts)
             metadata["resume_extract"] = self._dump_resume_debug_payload(payload)
+            metadata["document_text"] = body_text
+            metadata["image_text"] = image_text
+        elif input.document_type == DocumentKind.JOB_POSTING:
+            # 본문 + 이미지 OCR을 합쳐 AI가 채용공고 필드를 구조화한다.
+            payload = await self._job_posting_structured_payload(
+                combined,
+                JobPostingExtractDebug(source=input.input_type.value, text=combined),
+            )
+            metadata["job_posting_extract"] = payload.model_dump(mode="json", exclude_none=True)
+            metadata["document_text"] = body_text
+            metadata["image_text"] = image_text
         return metadata
 
     async def _text_metadata(self, input: TextInput, text: str) -> dict:
@@ -792,12 +860,16 @@ class DocumentService:
         if input.document_type == DocumentKind.RESUME:
             payload = await self._resume_structured_payload(text)
             metadata["resume_extract"] = self._dump_resume_debug_payload(payload)
+            metadata["document_text"] = text
+            metadata["image_text"] = ""
         elif input.document_type == DocumentKind.JOB_POSTING:
             payload = await self._job_posting_structured_payload(
                 text,
                 JobPostingExtractDebug(source="text", text=text),
             )
             metadata["job_posting_extract"] = payload.model_dump(mode="json", exclude_none=True)
+            metadata["document_text"] = text
+            metadata["image_text"] = ""
         return metadata
 
     async def _resume_structured_payload(self, text: str, image_texts: list[str] | None = None) -> ResumeExtractDebug:
@@ -816,7 +888,8 @@ class DocumentService:
         fallback = self._resume_debug_payload(text, image_texts)
         try:
             payload = await extract_resume_structured(text, fallback)
-        except StructuredExtractionError:
+        except StructuredExtractionError as exc:
+            logger.warning("이력서 AI 구조화 실패, 규칙 기반 폴백 사용: error=%s", exc)
             payload = fallback
 
         if image_texts and not payload.image_texts:
@@ -844,7 +917,8 @@ class DocumentService:
         """
         try:
             payload = await extract_job_posting_structured(text, fallback)
-        except StructuredExtractionError:
+        except StructuredExtractionError as exc:
+            logger.warning("채용공고 AI 구조화 실패, 폴백 사용: error=%s", exc)
             payload = fallback
 
         if not payload.relevant:
@@ -1086,8 +1160,9 @@ class DocumentService:
             logger.info("frame[%d] html_len=%d extracted_len=%d", i, len(h), len(extracted))
             if extracted:
                 parts.append(extracted)
-        text = "\n\n".join(parts)
+        document_text = "\n\n".join(parts)
         image_texts = image_texts or []
+        text = document_text
         if image_texts:
             text = (text + "\n\n" + "\n\n".join(image_texts)).strip()
 
@@ -1102,5 +1177,5 @@ class DocumentService:
         return ParsedDocument(
             original_input=input,
             extracted_text=truncated,
-            metadata=self._url_metadata(input, truncated, image_texts, structured_debug),
+            metadata=self._url_metadata(input, document_text, image_texts, structured_debug),
         )

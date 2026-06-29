@@ -1,13 +1,20 @@
+from typing import Any
+
 import pytest
+from dependency_injector import providers
 
 from app.ai.classification.document import LangChainDocumentClassifier
 from app.ai.classification.document import langchain as classifier_module
+from app.config.containers import Container
 from app.schemas.documents import DocumentClassification, DocumentKind, DocumentFormat, ParsedDocument, TextInput
 from app.services.document import DocumentService
 
 
 class FakeStructuredLLM:
-    async def ainvoke(self, messages):
+    config: Any = None
+
+    async def ainvoke(self, messages, config=None):
+        self.__class__.config = config
         return DocumentClassification(
             expected_kind=DocumentKind.RESUME,
             detected_kind=DocumentKind.RESUME,
@@ -35,6 +42,25 @@ async def test_langchain_document_classifier_uses_structured_output(monkeypatch)
 
     assert result.is_expected is True
     assert result.detected_kind == DocumentKind.RESUME
+
+
+@pytest.mark.asyncio
+async def test_langchain_document_classifier_passes_langfuse_handler_to_llm(monkeypatch):
+    handler = object()
+    monkeypatch.setattr(classifier_module.settings, "GEMINI_API_KEY", "real-test-key")
+    monkeypatch.setattr(classifier_module, "ChatGoogleGenerativeAI", FakeChatGoogleGenerativeAI)
+    container = Container()
+    container.langfuse_handler.override(providers.Object(handler))
+    container.wire(modules=[classifier_module])
+
+    try:
+        await LangChainDocumentClassifier().classify("이력서 본문", DocumentKind.RESUME)
+    finally:
+        container.unwire()
+
+    assert FakeStructuredLLM.config["callbacks"] == [handler]
+    assert FakeStructuredLLM.config["run_name"] == "document_classification"
+    assert FakeStructuredLLM.config["metadata"]["expected_kind"] == DocumentKind.RESUME.value
 
 
 class FakeRejectingClassifier:

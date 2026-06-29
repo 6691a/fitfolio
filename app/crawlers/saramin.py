@@ -103,12 +103,8 @@ class SaraminJobPostingCrawler:
                     )
                     if selected_html:
                         htmls = [selected_html]
-                        selected_payload = self._saramin_selected_debug_payload(iabs, selected_html, extra_docs)
-                        selected_payload = await job_posting_structured_payload(
-                            clean_text(lxml_html.fromstring(selected_html).text_content()),
-                            selected_payload,
-                        )
-                        structured_debug = selected_payload
+                        # AI 구조화는 이미지 OCR까지 끝난 뒤(crawl 끝부분)에 실행한다.
+                        structured_debug = self._saramin_selected_debug_payload(iabs, selected_html, extra_docs)
                         saved_primary_debug_html = True
                         saramin_selected = True
                         try:
@@ -128,6 +124,10 @@ class SaraminJobPostingCrawler:
                 break
 
         await self._extract_image_texts(client, final_url, extra_docs, document_type, image_texts, structured_debug)
+
+        if structured_debug is not None:
+            # 본문 + 이미지 OCR 텍스트를 합친 뒤 AI가 채용공고 필드를 구조화한다.
+            structured_debug = await job_posting_structured_payload(structured_debug.text, structured_debug)
 
         if not saved_primary_debug_html:
             save_debug_text(html, "url-page")

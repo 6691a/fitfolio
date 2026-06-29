@@ -1,11 +1,7 @@
-import logging
-
 from app.ai.extraction.errors import StructuredExtractionError
 from app.ai.extraction.langchain import structured_output
 from app.config.settings import settings
 from app.schemas.documents import ResumeExtractDebug
-
-logger = logging.getLogger(__name__)
 
 
 async def extract_resume_structured(text: str, fallback: ResumeExtractDebug) -> ResumeExtractDebug:
@@ -26,20 +22,11 @@ async def extract_resume_structured(text: str, fallback: ResumeExtractDebug) -> 
 
     result = await structured_output(
         ResumeExtractDebug,
-        "다음 텍스트가 이력서/자기소개서/포트폴리오인지 확인하고 ResumeExtractDebug JSON으로 정리하라.",
+        "다음 텍스트가 이력서/자기소개서/포트폴리오가 맞는지 판단하고, 각 항목을 의미에 맞는 필드로 정리하라.",
         text,
         fallback.model_dump(mode="json", exclude_none=True),
     )
     if isinstance(result, ResumeExtractDebug):
-        logger.info(
-            "AI 구조화 판단: kind=resume relevant=%s name_present=%s skills=%d image_texts=%d failure_reason=%s",
-            result.relevant,
-            bool(result.name),
-            len(result.skills),
-            len(result.image_texts),
-            result.failure_reason or "",
-        )
         return result
 
-    logger.info("AI 구조화 판단: kind=resume invalid_result=true")
     return fallback

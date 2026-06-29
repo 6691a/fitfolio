@@ -1,12 +1,12 @@
-import logging
+from typing import Any
 
+from dependency_injector.wiring import Provide, inject
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.ai.extraction.errors import StructuredExtractionError
+from app.ai.langfuse import langfuse_config
 from app.config.settings import settings
-
-logger = logging.getLogger(__name__)
 
 SYSTEM = (
     "너는 문서 텍스트를 지정된 JSON 스키마로 정리하는 추출기다. "
@@ -17,7 +17,15 @@ SYSTEM = (
 )
 
 
-async def structured_output(schema, instruction: str, text: str, fallback: dict):
+@inject
+async def structured_output(
+    schema,
+    instruction: str,
+    text: str,
+    fallback: dict,
+    # Container를 직접 import하면 순환참조(containers→services/ai→containers)라 provider 이름(문자열)으로 주입한다.
+    langfuse_handler: Any = Provide["langfuse_handler"],
+):
     """Gemini 구조화 출력을 호출해 지정 스키마 객체를 받아온다.
 
     Args:
@@ -25,6 +33,7 @@ async def structured_output(schema, instruction: str, text: str, fallback: dict)
         instruction: 모델에 줄 작업 지시문.
         text: 구조화 대상 원문 텍스트.
         fallback: 참고용 보수 추출 JSON(dict).
+        langfuse_handler: 컨테이너에서 주입되는 LangChain callback handler.
 
     Returns:
         schema 타입의 구조화 결과 객체.
@@ -39,7 +48,11 @@ async def structured_output(schema, instruction: str, text: str, fallback: dict)
             temperature=0,
         ).with_structured_output(schema)
         message = HumanMessage(content=(f"{instruction}\n\n기존 보수 추출 JSON:\n{fallback}\n\n원문 텍스트:\n{text}"))
-        return await llm.ainvoke([SystemMessage(content=SYSTEM), message])
+        config = langfuse_config(
+            langfuse_handler,
+            run_name="structured_output",
+            metadata={"schema": schema.__name__, "text_len": len(text)},
+        )
+        return await llm.ainvoke([SystemMessage(content=SYSTEM), message], config=config)
     except Exception as exc:
-        logger.info("AI 구조화 판단 실패: schema=%s error=%s", schema.__name__, type(exc).__name__)
         raise StructuredExtractionError(str(exc)) from exc

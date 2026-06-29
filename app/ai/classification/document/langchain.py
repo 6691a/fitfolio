@@ -1,13 +1,13 @@
-import logging
+from typing import Any
 
+from dependency_injector.wiring import Provide, inject
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.ai.classification.document.errors import DocumentClassificationError
+from app.ai.langfuse import langfuse_config
 from app.config.settings import settings
 from app.schemas.documents import DocumentClassification, DocumentKind
-
-logger = logging.getLogger(__name__)
 
 KIND_LABEL: dict[DocumentKind, str] = {
     DocumentKind.RESUME: "이력서/자기소개서/포트폴리오",
@@ -23,12 +23,20 @@ SYSTEM = (
 
 
 class LangChainDocumentClassifier:
-    async def classify(self, text: str, expected_kind: DocumentKind) -> DocumentClassification:
+    @inject
+    async def classify(
+        self,
+        text: str,
+        expected_kind: DocumentKind,
+        # Container를 직접 import하면 순환참조(containers→services/ai→containers)라 provider 이름(문자열)으로 주입한다.
+        langfuse_handler: Any = Provide["langfuse_handler"],
+    ) -> DocumentClassification:
         """Gemini로 텍스트가 기대 문서 종류와 일치하는지 판별한다.
 
         Args:
             text: 판별할 문서 텍스트.
             expected_kind: 기대하는 문서 종류.
+            langfuse_handler: 컨테이너에서 주입되는 LangChain callback handler.
 
         Returns:
             기대 종류 일치 여부와 신뢰도를 담은 DocumentClassification.
@@ -54,24 +62,16 @@ class LangChainDocumentClassifier:
                     f"<document_text>\n{text[: settings.DOCUMENT_MAX_EXTRACTED_CHARS]}\n</document_text>"
                 )
             )
-            result = await llm.ainvoke([SystemMessage(content=SYSTEM), message])
-        except Exception as exc:
-            logger.info(
-                "AI 문서 유형 판단 실패: expected_kind=%s error=%s",
-                expected_kind.value,
-                type(exc).__name__,
+            config = langfuse_config(
+                langfuse_handler,
+                run_name="document_classification",
+                metadata={"expected_kind": expected_kind.value, "text_len": len(text)},
             )
+            result = await llm.ainvoke([SystemMessage(content=SYSTEM), message], config=config)
+        except Exception as exc:
             raise DocumentClassificationError(str(exc)) from exc
 
         if not isinstance(result, DocumentClassification):
             raise DocumentClassificationError("invalid document classification result")
 
-        logger.info(
-            "AI 문서 유형 판단: expected=%s detected=%s is_expected=%s confidence=%.2f failure_reason=%s",
-            result.expected_kind.value,
-            result.detected_kind.value if isinstance(result.detected_kind, DocumentKind) else result.detected_kind,
-            result.is_expected,
-            result.confidence,
-            result.failure_reason or "",
-        )
         return result

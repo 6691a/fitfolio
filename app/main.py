@@ -1,18 +1,25 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from app.ai import vision
+from app.ai.classification.document import langchain as classifier_langchain
+from app.ai.extraction import langchain as extraction_langchain
 from app.config.containers import Container
 from app.config.settings import settings
 from app.controllers import documents
-from app.services.document import (
+from app.services.errors import (
     DocumentFileParseError,
+    EmbeddingUnavailableError,
     FileTooLargeError,
     InsufficientJobContentError,
     UnsupportedDocumentFormatError,
 )
+
+logger = logging.getLogger(__name__)
 
 # 서비스가 던지는 도메인 예외 → HTTP 상태 매핑. 컨트롤러/서비스는 HTTPException을 직접 만들지 않는다.
 _DOMAIN_EXCEPTION_STATUS: dict[type[Exception], int] = {
@@ -20,30 +27,59 @@ _DOMAIN_EXCEPTION_STATUS: dict[type[Exception], int] = {
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     DocumentFileParseError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     InsufficientJobContentError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    EmbeddingUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
-    """도메인 예외를 일관된 HTTP 응답으로 변환하는 전역 핸들러를 등록한다.
+    """도메인 예외와 예기치 못한 예외를 일관된 HTTP 응답으로 변환하는 핸들러를 등록한다.
+
+    코딩된(예상 가능한) 실패는 도메인 예외 → 매핑된 4xx/5xx로 응답하고, 그 외 예기치 못한
+    예외만 500으로 처리한다. 모든 경로에서 원인을 로깅해 개발자가 인지·수정할 수 있게 한다.
 
     Args:
         app: 핸들러를 등록할 FastAPI 애플리케이션.
     """
 
     async def handle_domain_error(request: Request, exc: Exception) -> JSONResponse:
-        """등록된 도메인 예외를 매핑된 상태코드의 JSON 응답으로 바꾼다.
+        """등록된 도메인 예외를 매핑된 상태코드의 JSON 응답으로 바꾸고 로깅한다.
+
+        5xx(서버 책임)는 error로, 4xx(클라이언트 입력)는 info로 남겨 노이즈를 분리한다.
 
         Args:
-            request: 현재 요청(미사용).
+            request: 현재 요청.
             exc: 발생한 도메인 예외.
 
         Returns:
             `{"detail": ...}` 형태의 JSONResponse.
         """
-        return JSONResponse(status_code=_DOMAIN_EXCEPTION_STATUS[type(exc)], content={"detail": str(exc)})
+        status_code = _DOMAIN_EXCEPTION_STATUS[type(exc)]
+        location = f"{request.method} {request.url.path}"
+        if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+            logger.error("도메인 예외 %s -> %d: %s", location, status_code, exc)
+        else:
+            logger.info("도메인 예외 %s -> %d: %s", location, status_code, exc)
+        return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+    async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        """매핑되지 않은 예기치 못한 예외를 트레이스백과 함께 로깅하고 500으로 응답한다.
+
+        Args:
+            request: 현재 요청.
+            exc: 발생한 예외.
+
+        Returns:
+            일반화된 `{"detail": ...}` 500 JSONResponse.
+        """
+        logger.exception("처리되지 않은 예외 %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "서버 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요."},
+        )
 
     for exc_type in _DOMAIN_EXCEPTION_STATUS:
         app.add_exception_handler(exc_type, handle_domain_error)
+    app.add_exception_handler(Exception, handle_unexpected_error)
 
 
 @asynccontextmanager
@@ -62,7 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 container = Container()
-container.wire(modules=[documents])
+container.wire(modules=[documents, classifier_langchain, extraction_langchain, vision])
 
 app = FastAPI(title="Fitfolio", lifespan=lifespan)
 # pyrefly: ignore [missing-attribute]

@@ -4,7 +4,8 @@ import pytest
 from docx import Document as DocxDocument
 
 from app.schemas.documents import DocumentFormat, DocumentKind, FileInput
-from app.services.document import DocumentFileParseError, DocumentService
+from app.services.document import DocumentService
+from app.services.errors import DocumentFileParseError
 
 
 def _make_docx(path: Path) -> None:

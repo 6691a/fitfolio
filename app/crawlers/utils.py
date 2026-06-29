@@ -12,6 +12,7 @@ from app.ai.extraction import StructuredExtractionError, extract_job_posting_str
 from app.config.settings import settings
 from app.schemas.documents import JobPostingExtractDebug
 from app.security.job_domains import is_allowed_job_domain
+from app.services.errors import InsufficientJobContentError
 from app.utils import clean_text  # 재노출: 크롤러 모듈들이 app.crawlers.utils에서 import
 
 logger = logging.getLogger(__name__)
@@ -277,11 +278,10 @@ async def job_posting_structured_payload(text: str, fallback: JobPostingExtractD
     """
     try:
         payload = await extract_job_posting_structured(text, fallback)
-    except StructuredExtractionError:
+    except StructuredExtractionError as exc:
+        logger.warning("채용공고 AI 구조화 실패, 크롤러 폴백 사용: error=%s", exc)
         payload = fallback
 
     if not payload.relevant:
-        from app.services.document import InsufficientJobContentError
-
         raise InsufficientJobContentError(payload.failure_reason or "이 문서는 채용공고로 보이지 않습니다.")
     return payload

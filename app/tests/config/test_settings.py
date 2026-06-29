@@ -19,6 +19,12 @@ def test_document_extraction_settings_can_be_loaded_from_env(monkeypatch):
     monkeypatch.setenv("SARAMIN_RELAY_AJAX_PATH", "/custom/ajax")
     monkeypatch.setenv("WANTED_HOST_SUFFIX", "example-wanted.co.kr")
     monkeypatch.setenv("BROWSER_HEADLESS", "false")
+    monkeypatch.setenv("EMBEDDING_MODEL", "models/test-embedding")
+    monkeypatch.setenv("EMBEDDING_DIM", "512")
+    monkeypatch.setenv("EMBEDDING_DOCUMENT_TASK_TYPE", "CUSTOM_DOCUMENT")
+    monkeypatch.setenv("EMBEDDING_QUERY_TASK_TYPE", "CUSTOM_QUERY")
+    monkeypatch.setenv("JOB_POSTING_DEFAULT_TIMEZONE", "UTC")
+    monkeypatch.setenv("TIME_ZONE", "Asia/Tokyo")
 
     settings = Settings(_env_file=None)
 
@@ -36,6 +42,12 @@ def test_document_extraction_settings_can_be_loaded_from_env(monkeypatch):
     assert settings.SARAMIN_RELAY_AJAX_PATH == "/custom/ajax"
     assert settings.WANTED_HOST_SUFFIX == "example-wanted.co.kr"
     assert settings.BROWSER_HEADLESS is False
+    assert settings.EMBEDDING_MODEL == "models/test-embedding"
+    assert settings.EMBEDDING_DIM == 512
+    assert settings.EMBEDDING_DOCUMENT_TASK_TYPE == "CUSTOM_DOCUMENT"
+    assert settings.EMBEDDING_QUERY_TASK_TYPE == "CUSTOM_QUERY"
+    assert settings.JOB_POSTING_DEFAULT_TIMEZONE == "UTC"
+    assert settings.TIME_ZONE == "Asia/Tokyo"
 
 
 def test_fastapi_startup_prepares_debug_image_dir(tmp_path, monkeypatch):

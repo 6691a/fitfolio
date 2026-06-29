@@ -1,12 +1,28 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Document
 from app.schemas.documents import DocumentFormat, DocumentKind, ParseStatus
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
+
+@dataclass(frozen=True)
+class UrlDocumentRequestResult:
+    """URL 문서 요청 결과.
+
+    Attributes:
+        document: 생성했거나 재사용하기로 한 문서.
+        created: 이번 요청에서 새로 생성했으면 True, 기존 문서 재사용이면 False.
+    """
+
+    document: Document
+    created: bool
 
 
 class DocumentsRepository:
@@ -69,6 +85,80 @@ class DocumentsRepository:
         """
         async with self._session_factory() as session:
             return await session.get(Document, document_id)
+
+    async def find_reusable_by_source_url(self, *, document_type: DocumentKind, source_url: str) -> Document | None:
+        """같은 source_url로 재사용 가능한 URL 문서를 찾는다.
+
+        PENDING/STARTED/RETRY는 이미 처리 중인 문서이므로 새 레코드를 만들지 않고
+        기존 document_id를 반환한다. DONE은 완료 결과를 재사용한다. FAILED는 재시도를
+        허용하기 위해 제외한다.
+
+        Args:
+            document_type: 문서 종류(이력서/채용공고).
+            source_url: 정규화된 원본 URL.
+
+        Returns:
+            가장 최근의 재사용 가능한 동일 URL 문서, 없으면 None.
+        """
+        async with self._session_factory() as session:
+            return await session.scalar(
+                select(Document)
+                .where(
+                    Document.document_type == document_type.value,
+                    Document.format == DocumentFormat.URL.value,
+                    Document.source_url == source_url,
+                    Document.status.in_(
+                        [
+                            ParseStatus.PENDING,
+                            ParseStatus.STARTED,
+                            ParseStatus.RETRY,
+                            ParseStatus.DONE,
+                        ]
+                    ),
+                )
+                .order_by(Document.id.desc())
+                .limit(1)
+            )
+
+    async def create_url_or_get_reusable(
+        self, *, document_type: DocumentKind, source_url: str
+    ) -> UrlDocumentRequestResult:
+        """URL 문서를 원자적으로 생성하거나 이미 처리 중/완료된 동일 URL 문서를 반환한다.
+
+        DB의 partial unique index가 동시 생성 경쟁을 막는다. 경쟁에서 진 요청은
+        IntegrityError 후 재조회해 먼저 생성된 문서 ID를 재사용한다.
+
+        Args:
+            document_type: 문서 종류(보통 채용공고).
+            source_url: 정규화된 원본 URL.
+
+        Returns:
+            문서와 신규 생성 여부.
+
+        Raises:
+            IntegrityError: unique 충돌 후에도 재사용 가능한 문서를 찾지 못한 경우.
+        """
+        existing = await self.find_reusable_by_source_url(document_type=document_type, source_url=source_url)
+        if existing is not None:
+            return UrlDocumentRequestResult(document=existing, created=False)
+
+        async with self._session_factory() as session:
+            record = Document(
+                document_type=document_type,
+                format=DocumentFormat.URL.value,
+                source_url=source_url,
+                status=ParseStatus.PENDING,
+            )
+            session.add(record)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                existing = await self.find_reusable_by_source_url(document_type=document_type, source_url=source_url)
+                if existing is not None:
+                    return UrlDocumentRequestResult(document=existing, created=False)
+                raise
+            return UrlDocumentRequestResult(document=record, created=True)
 
     async def mark_started(self, document_id: int) -> None:
         """문서 상태를 STARTED로 표시한다(문서가 없으면 무시).
