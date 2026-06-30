@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 from app.main import _register_exception_handlers
 from app.services.errors import (
     DocumentFileParseError,
-    EmbeddingUnavailableError,
     FileTooLargeError,
     InsufficientJobContentError,
     UnsupportedDocumentFormatError,
@@ -19,7 +18,6 @@ from app.services.errors import (
         (FileTooLargeError, status.HTTP_413_CONTENT_TOO_LARGE),
         (DocumentFileParseError, status.HTTP_422_UNPROCESSABLE_ENTITY),
         (InsufficientJobContentError, status.HTTP_422_UNPROCESSABLE_ENTITY),
-        (EmbeddingUnavailableError, status.HTTP_503_SERVICE_UNAVAILABLE),
     ],
 )
 def test_domain_exception_maps_to_http_status(exc, expected_status):

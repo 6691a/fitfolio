@@ -1,14 +1,9 @@
 import asyncio
 from types import SimpleNamespace
 
-import pytest
-
-from app.ai import embeddings
-from app.schemas.documents import DocumentFormat, DocumentKind, ParsedDocument, TextInput
+from app.schemas.documents import DocumentFormat, DocumentKind, EmploymentType, ParsedDocument, Region, TextInput
 from app.schemas.profiles import JobPostingProfileData
-from app.services import document as document_module
 from app.services.document import DocumentService
-from app.services.errors import EmbeddingUnavailableError
 from app.services.profiles import build_job_posting_search_text
 
 
@@ -142,65 +137,70 @@ def test_request_parse_url_concurrent_requests_reuse_same_pending_document(monke
 class _FakeProfilesRepo:
     def __init__(self, rows):
         self.rows = rows
-        self.embedding = None
-        self.limit = None
+        self.kwargs = None
 
-    async def search_job_postings(self, *, embedding, limit):
-        self.embedding = embedding
-        self.limit = limit
+    async def list_job_postings(self, **kwargs):
+        self.kwargs = kwargs
         return self.rows
 
 
-def test_search_job_postings_maps_rows_to_results(monkeypatch):
-    async def fake_embed_query(text):
-        return [0.1] * embeddings.EMBEDDING_DIM
+def _list_row(document_id, company_name, title, score):
+    return (
+        SimpleNamespace(
+            document_id=document_id,
+            company_name=company_name,
+            title=title,
+            location=None,
+            region=Region.SEOUL,
+            employment_type=EmploymentType.FULL_TIME,
+            start_date=None,
+            end_date=None,
+            source_url=f"u{document_id}",
+        ),
+        score,
+    )
 
-    monkeypatch.setattr(document_module, "embed_query", fake_embed_query)
-    rows = [
-        (SimpleNamespace(document_id=1, company_name="무신사", title="백엔드", source_url="u1"), 0.1),
-        (SimpleNamespace(document_id=2, company_name="네이버", title="플랫폼", source_url="u2"), 0.4),
-    ]
-    service = DocumentService(documents_repository=None, profiles_repository=_FakeProfilesRepo(rows))  # type: ignore[arg-type]
 
-    results = asyncio.run(service.search_job_postings("FastAPI 백엔드", limit=5))
+def test_list_job_postings_maps_rows_to_results():
+    # repo 결과(프로필, 점수)를 목록 DTO로 매핑하고 검색어/필터/정렬 인자를 그대로 전달한다.
+    rows = [_list_row(1, "무신사", "백엔드", 0.83), _list_row(2, "네이버", "플랫폼", None)]
+    repo = _FakeProfilesRepo(rows)
+    service = DocumentService(documents_repository=None, profiles_repository=repo)  # type: ignore[arg-type]
 
+    results = asyncio.run(
+        service.list_job_postings(query="FastAPI 백엔드", region=Region.SEOUL, sort="start_date", order="asc", limit=5)
+    )
+
+    assert repo.kwargs == {
+        "query": "FastAPI 백엔드",
+        "employment_type": None,
+        "region": Region.SEOUL,
+        "sort": "start_date",
+        "order": "asc",
+        "limit": 5,
+    }
     assert [r.document_id for r in results] == [1, 2]
     assert results[0].company_name == "무신사"
-    assert results[0].score == round(1.0 - 0.1, 4)
-
-
-def test_search_job_postings_raises_when_embedding_unavailable(monkeypatch):
-    # 임베딩 실패는 빈 결과로 감추지 않고 503으로 매핑되는 도메인 예외를 던진다.
-    async def fake_embed_query(text):
-        return None
-
-    monkeypatch.setattr(document_module, "embed_query", fake_embed_query)
-    service = DocumentService(documents_repository=None, profiles_repository=_FakeProfilesRepo([]))  # type: ignore[arg-type]
-
-    with pytest.raises(EmbeddingUnavailableError):
-        asyncio.run(service.search_job_postings("쿼리"))
+    assert results[0].region == Region.SEOUL
+    assert results[0].employment_type == EmploymentType.FULL_TIME
+    assert results[0].score == round(0.83, 4)
+    assert results[1].score is None  # 검색 점수 없는 행
 
 
 class _FakeStoreRepo:
     def __init__(self):
         self.upserted_document_id = None
-        self.embedded_document_id = None
-        self.embedding: list[float] | None = None
+        self.search_text: str | None = None
 
     async def upsert_job_posting_profile(self, *, document_id, profile):
         self.upserted_document_id = document_id
         return SimpleNamespace(document_id=document_id)
 
-    async def set_job_posting_embedding(self, *, document_id, embedding):
-        self.embedded_document_id = document_id
-        self.embedding = embedding
+    async def set_job_posting_search_text(self, *, document_id, search_text):
+        self.search_text = search_text
 
 
-def test_store_profile_embeds_job_posting(monkeypatch):
-    async def fake_embed_document(text):
-        return [0.2] * embeddings.EMBEDDING_DIM
-
-    monkeypatch.setattr(document_module, "embed_document", fake_embed_document)
+def test_store_profile_indexes_search_text():
     repo = _FakeStoreRepo()
     service = DocumentService(documents_repository=None, profiles_repository=repo)  # type: ignore[arg-type]
 
@@ -220,6 +220,5 @@ def test_store_profile_embeds_job_posting(monkeypatch):
     asyncio.run(service.store_profile(document, parsed))
 
     assert repo.upserted_document_id == 7
-    assert repo.embedded_document_id == 7
-    assert repo.embedding is not None
-    assert len(repo.embedding) == embeddings.EMBEDDING_DIM
+    assert repo.search_text is not None
+    assert "무신사" in repo.search_text

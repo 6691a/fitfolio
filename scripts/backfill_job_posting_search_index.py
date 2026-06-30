@@ -1,11 +1,10 @@
-"""임베딩이 비어 있는 기존 채용공고 프로필을 다시 임베딩해 채운다.
+"""검색 텍스트가 비어 있는 기존 채용공고 프로필의 search_text(pg_trgm 검색용)를 채운다.
 
-실행: uv run python scripts/backfill_job_posting_embeddings.py
+실행: uv run python scripts/backfill_job_posting_search_index.py
 """
 
 import asyncio
 
-from app.ai.embeddings import embed_document
 from app.database.session import Database
 from app.repositories.profiles import ProfilesRepository
 from app.schemas.profiles import JobPostingProfileData
@@ -30,23 +29,18 @@ def _to_profile_data(row) -> JobPostingProfileData:
 
 
 async def main() -> None:
-    """임베딩이 없는 채용공고 프로필을 모두 임베딩해 저장한다."""
+    """search_text가 없는 채용공고에 search_text를 채운다."""
     async with Database() as database:
         repo = ProfilesRepository(session_factory=database.async_session)
-        rows = await repo.list_job_postings_without_embedding()
-        print(f"임베딩 대상: {len(rows)}건")
+        rows = await repo.list_job_postings_without_search_text()
+        print(f"백필 대상: {len(rows)}건")
 
-        done = 0
         for row in rows:
-            embedding = await embed_document(build_job_posting_search_text(_to_profile_data(row)))
-            if embedding is None:
-                print(f"  document_id={row.document_id}: 임베딩 실패(스킵)")
-                continue
-            await repo.set_job_posting_embedding(document_id=row.document_id, embedding=embedding)
-            done += 1
+            search_text = build_job_posting_search_text(_to_profile_data(row))
+            await repo.set_job_posting_search_text(document_id=row.document_id, search_text=search_text)
             print(f"  document_id={row.document_id}: 완료")
 
-        print(f"백필 완료: {done}/{len(rows)}")
+        print(f"백필 완료: {len(rows)}건")
 
 
 if __name__ == "__main__":

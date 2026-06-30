@@ -1,13 +1,27 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
-from sqlalchemy import select
+from sqlalchemy import func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import JobPostingProfile, ResumeProfile
+from app.schemas.documents import EmploymentType, Region
 from app.schemas.profiles import JobPostingProfileData, ResumeProfileData
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
+# 채용공고 목록 정렬 허용 컬럼(컨트롤러 Literal과 일치).
+_SORT_COLUMNS = {
+    "created_at": JobPostingProfile.created_at,
+    "start_date": JobPostingProfile.start_date,
+    "end_date": JobPostingProfile.end_date,
+}
+
+
+def _ilike_pattern(value: str) -> str:
+    """ILIKE 부분일치 패턴(%값%)을 만들고 와일드카드(%, _)·escape를 리터럴 처리한다."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 class ProfilesRepository:
@@ -68,46 +82,69 @@ class ProfilesRepository:
             await session.commit()
             return record
 
-    async def set_job_posting_embedding(self, *, document_id: int, embedding: list[float]) -> None:
-        """채용공고 프로필 행에 의미 검색용 임베딩 벡터를 저장한다.
+    async def set_job_posting_search_text(self, *, document_id: int, search_text: str) -> None:
+        """채용공고 프로필 행에 FTS용 검색 텍스트를 저장한다.
 
         Args:
-            document_id: 임베딩을 저장할 채용공고 문서 ID.
-            embedding: 저장할 임베딩 벡터(프로필이 없으면 무시).
+            document_id: 검색 텍스트를 저장할 채용공고 문서 ID.
+            search_text: 저장할 합성 검색 텍스트(프로필이 없으면 무시).
         """
         async with self._session_factory() as session:
             record = await session.scalar(select(JobPostingProfile).where(JobPostingProfile.document_id == document_id))
             if record is None:
                 return
-            record.embedding = embedding
+            record.search_text = search_text
             await session.commit()
 
-    async def list_job_postings_without_embedding(self) -> list[JobPostingProfile]:
-        """임베딩이 아직 없는 채용공고 프로필을 모두 조회한다(백필용).
+    async def list_job_postings_without_search_text(self) -> list[JobPostingProfile]:
+        """검색 텍스트가 아직 없는 채용공고 프로필을 모두 조회한다(백필용).
 
         Returns:
-            embedding이 NULL인 JobPostingProfile 목록.
+            search_text가 NULL인 JobPostingProfile 목록.
         """
         async with self._session_factory() as session:
-            rows = await session.scalars(select(JobPostingProfile).where(JobPostingProfile.embedding.is_(None)))
+            rows = await session.scalars(select(JobPostingProfile).where(JobPostingProfile.search_text.is_(None)))
             return list(rows.all())
 
-    async def search_job_postings(self, *, embedding: list[float], limit: int) -> list[tuple[JobPostingProfile, float]]:
-        """임베딩 코사인 거리로 가까운 채용공고 프로필을 정렬해 반환한다.
+    async def list_job_postings(
+        self,
+        *,
+        query: str | None = None,
+        employment_type: EmploymentType | None = None,
+        region: Region | None = None,
+        sort: str = "created_at",
+        order: str = "desc",
+        limit: int = 50,
+    ) -> list[tuple[JobPostingProfile, float | None]]:
+        """채용공고 프로필을 검색어·필터·정렬 조건으로 조회한다.
+
+        검색어가 있으면 `search_text` pg_trgm 부분일치로 거르고 word_similarity를 점수로 함께
+        반환한다. employment_type/region은 enum 정확일치 필터다.
 
         Args:
-            embedding: 검색 질의 임베딩 벡터.
+            query: 검색어(회사명·기술스택 등). None이면 전체 목록.
+            employment_type: 채용 형태 enum 필터.
+            region: 근무지 대분류(시/도) enum 필터.
+            sort: 정렬 기준(created_at/start_date/end_date).
+            order: 정렬 방향(asc/desc).
             limit: 최대 결과 수.
 
         Returns:
-            (채용공고 프로필, 코사인 거리) 튜플 목록. 거리가 작을수록 유사하다.
+            (채용공고 프로필, 관련도 점수 또는 None) 튜플 목록.
         """
-        distance = JobPostingProfile.embedding.cosine_distance(embedding).label("distance")
+        sort_column = _SORT_COLUMNS.get(sort, JobPostingProfile.created_at)
+        ordered = (sort_column.asc() if order == "asc" else sort_column.desc()).nulls_last()
+        score = func.word_similarity(query, JobPostingProfile.search_text).label("score") if query else null()
+
+        stmt = select(JobPostingProfile, score)
+        if query:
+            stmt = stmt.where(JobPostingProfile.search_text.ilike(_ilike_pattern(query), escape="\\"))
+        if employment_type is not None:
+            stmt = stmt.where(JobPostingProfile.employment_type == employment_type)
+        if region is not None:
+            stmt = stmt.where(JobPostingProfile.region == region)
+        stmt = stmt.order_by(ordered).limit(limit)
+
         async with self._session_factory() as session:
-            rows = await session.execute(
-                select(JobPostingProfile, distance)
-                .where(JobPostingProfile.embedding.is_not(None))
-                .order_by(distance)
-                .limit(limit)
-            )
+            rows = await session.execute(stmt)
             return [(row[0], row[1]) for row in rows.all()]

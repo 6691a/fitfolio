@@ -15,7 +15,3 @@ class InsufficientJobContentError(Exception):
 
 class FileTooLargeError(Exception):
     pass
-
-
-class EmbeddingUnavailableError(Exception):
-    pass

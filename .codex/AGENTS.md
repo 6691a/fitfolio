@@ -21,9 +21,9 @@ app/
 ```
 
 - 계층 책임: 컨트롤러는 얇게, 핵심 로직은 services, tasks는 진입점+배선만, repositories는 DB만. **컨트롤러는 레포지토리를 직접 호출하지 않고 서비스를 주입해 서비스가 레포지토리를 다룬다**(예: `get_parse_status` → `DocumentService.get_parse_status`, 컨트롤러는 `None`이면 404로만 매핑).
-- 예외: 도메인 예외는 `app/services/errors.py`에 모아 정의하고(`UnsupportedDocumentFormatError`·`FileTooLargeError`·`DocumentFileParseError`·`InsufficientJobContentError`·`EmbeddingUnavailableError`) 서비스에서 던진다. `HTTPException`은 만들지 않는다. import는 `from app.services.errors import ...`(`app.services.document` 재노출에 의존 금지). HTTP 매핑은 `app/main.py` 전역 핸들러(`_DOMAIN_EXCEPTION_STATUS`)에 모은다(새 예외는 여기 등록). 컨트롤러는 입력 검증·404에만 `HTTPException` 사용.
+- 예외: 도메인 예외는 `app/services/errors.py`에 모아 정의하고(`UnsupportedDocumentFormatError`·`FileTooLargeError`·`DocumentFileParseError`·`InsufficientJobContentError`) 서비스에서 던진다. `HTTPException`은 만들지 않는다. import는 `from app.services.errors import ...`(`app.services.document` 재노출에 의존 금지). HTTP 매핑은 `app/main.py` 전역 핸들러(`_DOMAIN_EXCEPTION_STATUS`)에 모은다(새 예외는 여기 등록). 컨트롤러는 입력 검증·404에만 `HTTPException` 사용.
 - 실패 처리·로깅: **조용한 fail-soft 금지** — `except` 폴백(기본값·`None`·빈 결과·`pass`)은 반드시 원인 로깅(외부 서비스/AI/임베딩 실패는 `warning`+, 기대 가능한 단건 스킵은 info/debug). 성공 로그는 Langfuse가 담당하므로 중복 금지, **실패·폴백 로깅은 코드 책임**(Langfuse 안 닿는 임베딩 실패는 특히 필수).
-- 상태코드: 코딩된(예상 가능한) 실패는 500이 아니라 도메인 예외 → 4xx/5xx로(예: 검색 임베딩 실패 → `EmbeddingUnavailableError` 503; 빈 결과로 감추지 않음). 500은 *예기치 못한* 예외에만 — `app/main.py` catch-all(`handle_unexpected_error`)이 `logger.exception`(트레이스백)으로 남기고 내부 메시지 비노출 500을 반환한다. 핸들러 로깅 레벨: 5xx=`error`/`exception`, 4xx=`info`.
+- 상태코드: 코딩된(예상 가능한) 실패는 500이 아니라 도메인 예외 → 4xx/5xx로(예: 외부 의존 서비스 일시 장애 → 503; 빈 결과로 감추지 않음). 500은 *예기치 못한* 예외에만 — `app/main.py` catch-all(`handle_unexpected_error`)이 `logger.exception`(트레이스백)으로 남기고 내부 메시지 비노출 500을 반환한다. 핸들러 로깅 레벨: 5xx=`error`/`exception`, 4xx=`info`.
 - DI: 의존 객체는 `Container`로 주입. 인프라는 얇은 래퍼 클래스 + `providers.Singleton(클래스)`(예: `Database`, `RedisCache`). 워커는 `worker_database`(Factory)를 쓰고 `document_service` provider로 조립하되 세션에 묶인 repo만 호출 시점에 덮어쓴다.
 - 유틸/네이밍: 상태 없는 순수 함수는 클래스/ABC 말고 모듈 함수로. 공유 범용은 `app/utils.py`, 도메인 전용은 그 도메인의 `utils.py`로(중복 제거). 외부에서 import하는 함수/상수는 `_` 없이, 모듈 내부 전용만 `_`. **폴더 이름에는 `_`를 쓰지 않는다.**
 - 패키지화: 모듈이 커지거나 역할이 갈리면 폴더로 쪼개고 `__init__.py`에서 재노출해 import 경로를 유지한다(예: `ai/classification/document/`, `ai/extraction/`).

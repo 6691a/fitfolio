@@ -9,8 +9,6 @@ Create Date: 2026-06-29 00:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 
 revision: str = "e2f3a4b5c6d7"
@@ -19,17 +17,14 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 _INDEX = "ix_job_posting_profiles_embedding"
-_COMMENT = "의미 검색용 임베딩 벡터(gemini-embedding-001)."
 
 
 def _swap_embedding(dim: int) -> None:
     """embedding 컬럼을 주어진 차원으로 다시 만든다(기존 값은 전부 NULL이라 무손실)."""
+    # raw SQL로 vector 컬럼 재생성(파이썬 pgvector 패키지 의존 없이).
     op.execute(f"DROP INDEX IF EXISTS {_INDEX}")
-    op.drop_column("job_posting_profiles", "embedding")
-    op.add_column(
-        "job_posting_profiles",
-        sa.Column("embedding", Vector(dim), nullable=True, comment=_COMMENT),
-    )
+    op.execute("ALTER TABLE job_posting_profiles DROP COLUMN embedding")
+    op.execute(f"ALTER TABLE job_posting_profiles ADD COLUMN embedding vector({dim})")
     op.execute(f"CREATE INDEX {_INDEX} ON job_posting_profiles USING hnsw (embedding vector_cosine_ops)")
 
 

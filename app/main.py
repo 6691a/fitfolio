@@ -13,7 +13,6 @@ from app.config.settings import settings
 from app.controllers import documents
 from app.services.errors import (
     DocumentFileParseError,
-    EmbeddingUnavailableError,
     FileTooLargeError,
     InsufficientJobContentError,
     UnsupportedDocumentFormatError,
@@ -27,7 +26,6 @@ _DOMAIN_EXCEPTION_STATUS: dict[type[Exception], int] = {
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     DocumentFileParseError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     InsufficientJobContentError: status.HTTP_422_UNPROCESSABLE_ENTITY,
-    EmbeddingUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

@@ -1,10 +1,49 @@
 import re
 from datetime import datetime
+from enum import StrEnum
 
 from app.config.settings import settings
-from app.schemas.documents import DocumentKind, ParsedDocument
+from app.schemas.documents import DocumentKind, EmploymentType, ParsedDocument, Region
 from app.schemas.profiles import JobPostingProfileData, ProfileData, ResumeProfileData
 from app.utils import parse_datetime_to_utc, resolve_timezone_name
+
+# 근무지 상세주소 접두사 → region 대분류(자치도 풀네임 별칭 포함).
+_REGION_PREFIXES: dict[Region, tuple[str, ...]] = {
+    Region.SEOUL: ("서울",),
+    Region.BUSAN: ("부산",),
+    Region.DAEGU: ("대구",),
+    Region.INCHEON: ("인천",),
+    Region.GWANGJU: ("광주",),
+    Region.DAEJEON: ("대전",),
+    Region.ULSAN: ("울산",),
+    Region.SEJONG: ("세종",),
+    Region.GYEONGGI: ("경기",),
+    Region.GANGWON: ("강원",),
+    Region.CHUNGBUK: ("충북", "충청북도"),
+    Region.CHUNGNAM: ("충남", "충청남도"),
+    Region.JEONBUK: ("전북", "전라북도"),
+    Region.JEONNAM: ("전남", "전라남도"),
+    Region.GYEONGBUK: ("경북", "경상북도"),
+    Region.GYEONGNAM: ("경남", "경상남도"),
+    Region.JEJU: ("제주",),
+}
+
+
+def region_from_location(location: str | None) -> Region | None:
+    """상세 주소에서 시/도 대분류(Region)를 추론한다(AI region이 없을 때 폴백).
+
+    Args:
+        location: 근무지 상세 주소(없으면 None).
+
+    Returns:
+        매칭되는 Region, 추론 불가면 None.
+    """
+    if not location:
+        return None
+    for region, prefixes in _REGION_PREFIXES.items():
+        if any(prefix in location for prefix in prefixes):
+            return region
+    return None
 
 
 class UnsupportedProfileTypeError(Exception):
@@ -65,7 +104,9 @@ def build_profile_data(document_type: DocumentKind, parsed: ParsedDocument) -> P
             # title은 AI가 이미지+본문 텍스트만 보고 뽑은 값만 사용한다(page title/heading/position fallback 미사용).
             title=_structured_value(structured, "title"),
             location=_structured_value(structured, "work_location"),
-            employment_type=_structured_value(structured, "employment_type"),
+            region=_structured_enum(structured, "region", Region)
+            or region_from_location(_structured_value(structured, "work_location")),
+            employment_type=_structured_enum(structured, "employment_type", EmploymentType),
             career_requirement=_structured_value(structured, "career_requirement"),
             education_requirement=_structured_value(structured, "education_requirement"),
             start_date=_structured_datetime_utc(
@@ -151,6 +192,26 @@ def _structured_value(structured: object, key: str) -> str | None:
 
     value = structured.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _structured_enum[E: StrEnum](structured: object, key: str, enum_cls: type[E]) -> E | None:
+    """구조화 결과의 문자열 필드를 enum 멤버로 안전하게 변환한다.
+
+    Args:
+        structured: 구조화 추출 결과(dict가 아니면 None 반환).
+        key: 꺼낼 필드 이름.
+        enum_cls: 변환할 StrEnum 클래스.
+
+    Returns:
+        값이 enum 멤버면 해당 멤버, 아니면 None.
+    """
+    value = _structured_value(structured, key)
+    if value is None:
+        return None
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return None
 
 
 def _structured_list(structured: object, key: str) -> list:

@@ -1,11 +1,10 @@
 from datetime import datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.ai.embeddings import EMBEDDING_DIM
-from app.database.base import BaseModel
+from app.database.base import BaseModel, enum_column
+from app.schemas.documents import EmploymentType, Region
 
 
 class ResumeProfile(BaseModel):
@@ -116,12 +115,17 @@ class JobPostingProfile(BaseModel):
     location: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
-        comment="근무지 주소 또는 지역. 예: 서울 서초구.",
+        comment="근무지 상세 주소(표시용). 예: 서울 서초구 남부순환로.",
     )
-    employment_type: Mapped[str | None] = mapped_column(
-        String(100),
+    region: Mapped[Region | None] = mapped_column(
+        enum_column(Region, "region"),
         nullable=True,
-        comment="고용 형태. 예: 정규직, 계약직, 인턴, 수습 포함 여부.",
+        comment="근무지 대분류(시/도 17개 + 기타). 검색/필터용.",
+    )
+    employment_type: Mapped[EmploymentType | None] = mapped_column(
+        enum_column(EmploymentType, "employment_type"),
+        nullable=True,
+        comment="채용 형태 enum(정규직/계약직/인턴/아르바이트/프리랜서/파견직/파트타임/기타).",
     )
     career_requirement: Mapped[str | None] = mapped_column(
         String(255),
@@ -173,8 +177,8 @@ class JobPostingProfile(BaseModel):
         default=dict,
         comment="디버깅/추적용 원본 구조화 DTO. job_posting_extract 전체를 보관한다.",
     )
-    embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(EMBEDDING_DIM),
+    search_text: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
-        comment="의미 검색용 임베딩 벡터(gemini-embedding-001).",
+        comment="FTS(전문검색)용 합성 검색 텍스트. build_job_posting_search_text 결과.",
     )

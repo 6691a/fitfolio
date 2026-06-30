@@ -19,6 +19,42 @@ class DocumentKind(StrEnum):
     JOB_POSTING = "job_posting"
 
 
+class EmploymentType(StrEnum):
+    """채용 형태(사람인 근무형태 기준 단순화). 판단 불가/해당 없음은 OTHER."""
+
+    FULL_TIME = "정규직"
+    CONTRACT = "계약직"
+    INTERN = "인턴"
+    PART_TIME_JOB = "아르바이트"
+    FREELANCE = "프리랜서"
+    DISPATCH = "파견직"
+    PART_TIME = "파트타임"
+    OTHER = "기타"
+
+
+class Region(StrEnum):
+    """근무지 대분류(시/도 17개). 판단 불가/해당 없음은 OTHER."""
+
+    SEOUL = "서울"
+    BUSAN = "부산"
+    DAEGU = "대구"
+    INCHEON = "인천"
+    GWANGJU = "광주"
+    DAEJEON = "대전"
+    ULSAN = "울산"
+    SEJONG = "세종"
+    GYEONGGI = "경기"
+    GANGWON = "강원"
+    CHUNGBUK = "충북"
+    CHUNGNAM = "충남"
+    JEONBUK = "전북"
+    JEONNAM = "전남"
+    GYEONGBUK = "경북"
+    GYEONGNAM = "경남"
+    JEJU = "제주"
+    OTHER = "기타"
+
+
 SUPPORTED_MIME_TYPES: dict[DocumentFormat, frozenset[str]] = {
     DocumentFormat.PDF: frozenset({"application/pdf"}),
     DocumentFormat.IMAGE: frozenset({"image/png", "image/jpeg", "image/webp"}),
@@ -100,7 +136,8 @@ class JobPostingExtractDebug(BaseModel):
     position: str | None = None
     text: str
     work_location: str | None = None
-    employment_type: str | None = Field(default=None, description="고용 형태. 예: 정규직, 계약직, 인턴")
+    region: Region | None = Field(default=None, description="근무지 대분류(시/도). 주소를 보고 분류, 모르면 기타")
+    employment_type: EmploymentType | None = Field(default=None, description="채용 형태. 모르면 기타")
     career_requirement: str | None = Field(default=None, description="경력 요건. 예: 3년 이상, 신입, 경력 무관")
     education_requirement: str | None = Field(default=None, description="학력 요건. 예: 학력 무관, 대졸 이상")
     application_start_date: str | None = None

@@ -18,7 +18,6 @@ from app.ai.extraction import (
     extract_job_posting_structured,
     extract_resume_structured,
 )
-from app.ai.embeddings import embed_document, embed_query
 from app.ai.vision import extract_image_content
 from app.config.settings import settings
 from app.crawlers.job_postings import JobPostingCrawler
@@ -29,20 +28,21 @@ from app.schemas.documents import (
     DocumentFormat,
     DocumentInput,
     DocumentKind,
+    EmploymentType,
     FileInput,
     JobPostingExtractDebug,
     ParseApplicationAccepted,
     ParsedDocument,
     ParseJobStatus,
     ParseStatus,
+    Region,
     ResumeExtractDebug,
     TextInput,
     UrlInput,
 )
-from app.schemas.profiles import JobPostingProfileData, JobPostingSearchResult, ResumeProfileData
+from app.schemas.profiles import JobPostingListItem, JobPostingProfileData, ResumeProfileData
 from app.services.errors import (
     DocumentFileParseError,
-    EmbeddingUnavailableError,
     FileTooLargeError,
     InsufficientJobContentError,
     UnsupportedDocumentFormatError,
@@ -250,54 +250,71 @@ class DocumentService:
 
         if isinstance(profile, JobPostingProfileData):
             await self._profiles_repository.upsert_job_posting_profile(document_id=document.id, profile=profile)
-            await self._embed_job_posting(document.id, profile)
+            await self._index_job_posting(document.id, profile)
 
-    async def _embed_job_posting(self, document_id: int, profile: JobPostingProfileData) -> None:
-        """채용공고 프로필을 임베딩해 검색용 벡터로 저장한다(fail-soft).
+    async def _index_job_posting(self, document_id: int, profile: JobPostingProfileData) -> None:
+        """채용공고 프로필의 검색 텍스트(search_text)를 저장한다(pg_trgm 검색용).
 
         Args:
-            document_id: 임베딩을 저장할 채용공고 문서 ID.
-            profile: 임베딩 입력 텍스트를 만들 채용공고 프로필.
+            document_id: 색인할 채용공고 문서 ID.
+            profile: 검색 텍스트를 만들 채용공고 프로필.
         """
         if self._profiles_repository is None:
             return
-        embedding = await embed_document(build_job_posting_search_text(profile))
-        if embedding is not None:
-            await self._profiles_repository.set_job_posting_embedding(document_id=document_id, embedding=embedding)
+        search_text = build_job_posting_search_text(profile)
+        await self._profiles_repository.set_job_posting_search_text(document_id=document_id, search_text=search_text)
 
-    async def search_job_postings(self, query: str, limit: int = 10) -> list[JobPostingSearchResult]:
-        """질의를 임베딩해 의미적으로 가까운 채용공고를 검색한다.
+    async def list_job_postings(
+        self,
+        *,
+        query: str | None = None,
+        employment_type: EmploymentType | None = None,
+        region: Region | None = None,
+        sort: str = "created_at",
+        order: str = "desc",
+        limit: int = 50,
+    ) -> list[JobPostingListItem]:
+        """채용공고를 검색어·필터·정렬 조건으로 조회한다.
 
         Args:
-            query: 검색어(기술스택·회사명 등).
+            query: 검색어(기술스택·회사명 등). None이면 전체 목록.
+            employment_type: 채용 형태 enum 필터.
+            region: 근무지 대분류(시/도) enum 필터.
+            sort: 정렬 기준(created_at/start_date/end_date).
+            order: 정렬 방향(asc/desc).
             limit: 최대 결과 수.
 
         Returns:
-            유사도 순 채용공고 검색 결과.
+            조건에 맞는 채용공고 목록. 검색어가 있으면 score(관련도)가 채워진다.
 
         Raises:
             RuntimeError: 프로필 레포지토리가 주입되지 않은 경우.
-            EmbeddingUnavailableError: 검색어 임베딩 생성에 실패한 경우(503 매핑).
         """
         if self._profiles_repository is None:
             raise RuntimeError("ProfilesRepository must be injected through Container.profiles_repository")
 
-        embedding = await embed_query(query)
-        if embedding is None:
-            # 조용히 빈 결과를 주면 "검색 실패"가 "결과 없음"으로 오인된다 — 명시적으로 실패를 알린다.
-            logger.warning("채용공고 검색 임베딩 생성 실패 query_len=%d", len(query))
-            raise EmbeddingUnavailableError("검색 기능을 잠시 사용할 수 없습니다. 잠시 후 다시 시도해주세요.")
-
-        rows = await self._profiles_repository.search_job_postings(embedding=embedding, limit=limit)
+        rows = await self._profiles_repository.list_job_postings(
+            query=query,
+            employment_type=employment_type,
+            region=region,
+            sort=sort,
+            order=order,
+            limit=limit,
+        )
         return [
-            JobPostingSearchResult(
+            JobPostingListItem(
                 document_id=profile.document_id,
                 company_name=profile.company_name,
                 title=profile.title,
+                location=profile.location,
+                region=profile.region,
+                employment_type=profile.employment_type,
+                start_date=profile.start_date,
+                end_date=profile.end_date,
                 source_url=profile.source_url,
-                score=round(1.0 - distance, 4),
+                score=round(score, 4) if score is not None else None,
             )
-            for profile, distance in rows
+            for profile, score in rows
         ]
 
     async def get_parse_status(self, document_id: int) -> ParseJobStatus | None:

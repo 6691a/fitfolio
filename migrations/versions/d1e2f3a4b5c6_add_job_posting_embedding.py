@@ -9,8 +9,6 @@ Create Date: 2026-06-29 00:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 
 revision: str = "d1e2f3a4b5c6"
@@ -23,16 +21,9 @@ _INDEX = "ix_job_posting_profiles_embedding"
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # raw SQL로 vector 컬럼 생성(파이썬 pgvector 패키지 의존 없이 — Postgres vector 확장만 사용).
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    op.add_column(
-        "job_posting_profiles",
-        sa.Column(
-            "embedding",
-            Vector(768),
-            nullable=True,
-            comment="의미 검색용 임베딩 벡터(text-embedding-004, 768d).",
-        ),
-    )
+    op.execute("ALTER TABLE job_posting_profiles ADD COLUMN embedding vector(768)")
     op.execute(f"CREATE INDEX {_INDEX} ON job_posting_profiles USING hnsw (embedding vector_cosine_ops)")
 
 

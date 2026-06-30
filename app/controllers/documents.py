@@ -1,13 +1,17 @@
+from typing import Literal
+
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 
 from app.config.containers import Container
 from app.schemas.documents import (
     DocumentFormat,
+    EmploymentType,
     ParseApplicationAccepted,
     ParseJobStatus,
+    Region,
 )
-from app.schemas.profiles import JobPostingSearchResult
+from app.schemas.profiles import JobPostingListItem
 from app.security.job_domains import is_allowed_job_domain
 from app.services.document import DocumentService
 
@@ -71,24 +75,39 @@ async def parse_document(
     )
 
 
-@router.get("/job-postings/search", response_model=list[JobPostingSearchResult])
+@router.get("/job-postings", response_model=list[JobPostingListItem])
 @inject
-async def search_job_postings(
-    q: str = Query(..., min_length=1, description="검색어(기술스택·회사명 등)"),
-    limit: int = Query(10, ge=1, le=50),
+async def list_job_postings(
+    q: str | None = Query(None, description="검색어(회사명·기술스택 등). 없으면 전체 목록"),
+    employment_type: EmploymentType | None = Query(None, description="채용 형태 enum 필터"),
+    region: Region | None = Query(None, description="근무지 대분류(시/도) enum 필터"),
+    sort: Literal["created_at", "start_date", "end_date"] = Query("created_at"),
+    order: Literal["asc", "desc"] = Query("desc"),
+    limit: int = Query(50, ge=1, le=200),
     document: DocumentService = Depends(Provide[Container.document_service]),
 ):
-    """업로드된 채용공고를 의미 기반으로 검색해 유사도 순으로 반환한다.
+    """업로드된 채용공고를 검색어·필터·정렬로 조회한다.
 
     Args:
-        q: 검색어.
-        limit: 최대 결과 수(1~50).
+        q: 검색어(없으면 전체 목록).
+        employment_type: 채용 형태 enum 필터.
+        region: 근무지 대분류(시/도) enum 필터.
+        sort: 정렬 기준(등록일/시작일/종료일).
+        order: 정렬 방향.
+        limit: 최대 결과 수(1~200).
         document: 컨테이너가 주입하는 DocumentService.
 
     Returns:
-        유사도 순 채용공고 검색 결과 목록.
+        조건에 맞는 채용공고 목록.
     """
-    return await document.search_job_postings(q, limit)
+    return await document.list_job_postings(
+        query=q,
+        employment_type=employment_type,
+        region=region,
+        sort=sort,
+        order=order,
+        limit=limit,
+    )
 
 
 @router.get("/parse/{document_id}", response_model=ParseJobStatus)
