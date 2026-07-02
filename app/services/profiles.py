@@ -75,6 +75,7 @@ def build_profile_data(document_type: DocumentKind, parsed: ParsedDocument) -> P
         return ResumeProfileData(
             document_text=document_text,
             image_text=image_text,
+            title=_structured_value(structured, "title"),
             name=_structured_value(structured, "name"),
             email=_structured_value(structured, "email"),
             phone=_structured_value(structured, "phone"),
@@ -85,6 +86,8 @@ def build_profile_data(document_type: DocumentKind, parsed: ParsedDocument) -> P
             skills=_structured_list(structured, "skills"),
             education=_structured_list(structured, "education"),
             certifications=_structured_list(structured, "certifications"),
+            links=_structured_list(structured, "links"),
+            etc=_structured_list(structured, "etc"),
             raw_sections=raw_sections,
         )
 

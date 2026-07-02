@@ -1,3 +1,4 @@
+# Production/base compose file. Local development uses docker-compose.local.yml as an overlay.
 services:
   db:
     image: pgvector/pgvector:pg17

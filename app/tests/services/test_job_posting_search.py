@@ -51,7 +51,9 @@ def test_request_parse_url_reuses_existing_done_document():
     repo = _FakeDocsRepo(existing=SimpleNamespace(id=42))
     service = DocumentService(documents_repository=repo)  # type: ignore[arg-type]
 
-    result = asyncio.run(service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/"))
+    result = asyncio.run(
+        service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/", user_id=1)
+    )
 
     assert result == 42
     assert repo.created is False
@@ -63,7 +65,9 @@ def test_request_parse_url_reuses_existing_pending_document():
     repo = _FakeDocsRepo(existing=SimpleNamespace(id=43, status="pending"))
     service = DocumentService(documents_repository=repo)  # type: ignore[arg-type]
 
-    result = asyncio.run(service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/"))
+    result = asyncio.run(
+        service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/", user_id=1)
+    )
 
     assert result == 43
     assert repo.created is False
@@ -74,11 +78,15 @@ def test_request_parse_url_uses_atomic_create_when_no_reusable_document(monkeypa
     delayed_ids = []
     from app.tasks import documents as tasks_module
 
-    monkeypatch.setattr(tasks_module.task_parse_document, "delay", lambda document_id: delayed_ids.append(document_id))
+    monkeypatch.setattr(
+        tasks_module.task_parse_document, "delay", lambda document_id, user_id: delayed_ids.append(document_id)
+    )
     repo = _FakeDocsRepo(existing=None)
     service = DocumentService(documents_repository=repo)  # type: ignore[arg-type]
 
-    result = asyncio.run(service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/"))
+    result = asyncio.run(
+        service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/", user_id=1)
+    )
 
     assert result == 999
     assert repo.create_url_called is True
@@ -114,15 +122,21 @@ def test_request_parse_url_concurrent_requests_reuse_same_pending_document(monke
     delayed_ids = []
     from app.tasks import documents as tasks_module
 
-    monkeypatch.setattr(tasks_module.task_parse_document, "delay", lambda document_id: delayed_ids.append(document_id))
+    monkeypatch.setattr(
+        tasks_module.task_parse_document, "delay", lambda document_id, user_id: delayed_ids.append(document_id)
+    )
     repo = _ConcurrentUrlDocsRepo()
     service = DocumentService(documents_repository=repo)  # type: ignore[arg-type]
 
     async def request_twice():
         return await asyncio.wait_for(
             asyncio.gather(
-                service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/"),
-                service.request_parse_url(document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/"),
+                service.request_parse_url(
+                    document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/", user_id=1
+                ),
+                service.request_parse_url(
+                    document_type=DocumentKind.JOB_POSTING, url="https://x.com/jobs/7/", user_id=1
+                ),
             ),
             timeout=1,
         )
@@ -217,7 +231,7 @@ def test_store_profile_indexes_search_text():
     )
     document = SimpleNamespace(id=7, document_type="job_posting")
 
-    asyncio.run(service.store_profile(document, parsed))
+    asyncio.run(service.store_profile(document, parsed, user_id=1))
 
     assert repo.upserted_document_id == 7
     assert repo.search_text is not None

@@ -33,6 +33,7 @@ from app.schemas.documents import (
     JobPostingExtractDebug,
     ParseApplicationAccepted,
     ParsedDocument,
+    ParseJobAccepted,
     ParseJobStatus,
     ParseStatus,
     Region,
@@ -40,7 +41,7 @@ from app.schemas.documents import (
     TextInput,
     UrlInput,
 )
-from app.schemas.profiles import JobPostingListItem, JobPostingProfileData, ResumeProfileData
+from app.schemas.profiles import JobPostingListItem, JobPostingProfileData, ResumeListItem, ResumeProfileData
 from app.services.errors import (
     DocumentFileParseError,
     FileTooLargeError,
@@ -114,13 +115,14 @@ class DocumentService:
         self._profiles_repository = profiles_repository
         self._document_classifier = document_classifier
 
-    async def process(self, document_id: int) -> None:
+    async def process(self, document_id: int, user_id: int) -> None:
         """문서를 파싱→유형 검증→완료 처리/프로필 저장까지 오케스트레이션한다.
 
         파싱 실패나 유형 불일치 시 문서를 실패로 표시하고 중단한다.
 
         Args:
             document_id: 처리할 문서 ID(없으면 아무 것도 하지 않음).
+            user_id: 문서를 업로드한 사용자 ID(이력서 프로필 저장에 사용).
         """
         document = await self._documents_repository.get(document_id)
         if document is None:
@@ -149,7 +151,7 @@ class DocumentService:
             extracted_text=parsed.extracted_text,
             metadata=parsed.metadata,
         )
-        await self.store_profile(document, parsed)
+        await self.store_profile(document, parsed, user_id=user_id)
 
     def _build_document_input(self, document) -> DocumentInput:
         """DB 문서 레코드를 형식에 맞는 파싱 입력 스키마로 변환한다.
@@ -230,12 +232,13 @@ class DocumentService:
         )
         return False
 
-    async def store_profile(self, document, parsed: ParsedDocument) -> None:
+    async def store_profile(self, document, parsed: ParsedDocument, user_id: int) -> None:
         """파싱 결과로 이력서/채용공고 프로필을 생성해 저장한다.
 
         Args:
             document: 프로필이 속한 문서 레코드.
             parsed: 프로필을 만들 파싱 결과.
+            user_id: 문서를 업로드한 사용자 ID(이력서 프로필 소유자로 저장).
 
         Raises:
             RuntimeError: 프로필 레포지토리가 주입되지 않은 경우.
@@ -245,7 +248,11 @@ class DocumentService:
 
         profile = build_profile_data(DocumentKind(document.document_type), parsed)
         if isinstance(profile, ResumeProfileData):
-            await self._profiles_repository.upsert_resume_profile(document_id=document.id, profile=profile)
+            await self._profiles_repository.upsert_resume_profile(
+                document_id=document.id,
+                user_id=user_id,
+                profile=profile,
+            )
             return
 
         if isinstance(profile, JobPostingProfileData):
@@ -315,6 +322,35 @@ class DocumentService:
                 score=round(score, 4) if score is not None else None,
             )
             for profile, score in rows
+        ]
+
+    async def list_resumes(self, *, user_id: int, limit: int = 50) -> list[ResumeListItem]:
+        """사용자가 업로드한 이력서 목록을 최신순으로 조회한다.
+
+        Args:
+            user_id: 이력서를 조회할 사용자 ID.
+            limit: 최대 결과 수.
+
+        Returns:
+            사용자의 이력서 목록.
+
+        Raises:
+            RuntimeError: 프로필 레포지토리가 주입되지 않은 경우.
+        """
+        if self._profiles_repository is None:
+            raise RuntimeError("ProfilesRepository must be injected through Container.profiles_repository")
+
+        profiles = await self._profiles_repository.list_resumes(user_id=user_id, limit=limit)
+        return [
+            ResumeListItem(
+                document_id=profile.document_id,
+                title=profile.title,
+                name=profile.name,
+                email=profile.email,
+                career_summary=profile.career_summary,
+                created_at=profile.created_at,
+            )
+            for profile in profiles
         ]
 
     async def get_parse_status(self, document_id: int) -> ParseJobStatus | None:
@@ -422,6 +458,7 @@ class DocumentService:
         file_name: str,
         file_path: str,
         content_type: str,
+        user_id: int,
     ) -> int:
         """파일 문서 레코드를 만들고 비동기 파싱 작업을 큐에 등록한다.
 
@@ -431,6 +468,7 @@ class DocumentService:
             file_name: 업로드 원본 파일명.
             file_path: 저장된 파일 경로.
             content_type: 파일 MIME 타입.
+            user_id: 문서를 업로드한 사용자 ID(파싱 파이프라인에 전달).
 
         Returns:
             생성된 문서의 ID.
@@ -444,15 +482,16 @@ class DocumentService:
             file_path=file_path,
             content_type=content_type,
         )
-        task_parse_document.delay(record.id)
+        task_parse_document.delay(record.id, user_id)
         return record.id
 
-    async def request_parse_url(self, *, document_type: DocumentKind, url: str) -> int:
+    async def request_parse_url(self, *, document_type: DocumentKind, url: str, user_id: int) -> int:
         """URL 문서 레코드를 만들고 비동기 파싱 작업을 큐에 등록한다.
 
         Args:
             document_type: 문서 종류(보통 채용공고).
             url: 파싱할 채용공고 URL.
+            user_id: 문서를 업로드한 사용자 ID(파싱 파이프라인에 전달).
 
         Returns:
             생성된 문서의 ID.
@@ -473,15 +512,16 @@ class DocumentService:
             source_url=normalized_url,
         )
         if result.created:
-            task_parse_document.delay(result.document.id)
+            task_parse_document.delay(result.document.id, user_id)
         return result.document.id
 
-    async def request_parse_text(self, *, document_type: DocumentKind, text: str) -> int:
+    async def request_parse_text(self, *, document_type: DocumentKind, text: str, user_id: int) -> int:
         """텍스트 문서 레코드를 만들고 비동기 파싱 작업을 큐에 등록한다.
 
         Args:
             document_type: 문서 종류(이력서/채용공고).
             text: 파싱할 본문 텍스트.
+            user_id: 문서를 업로드한 사용자 ID(파싱 파이프라인에 전달).
 
         Returns:
             생성된 문서의 ID.
@@ -493,12 +533,13 @@ class DocumentService:
             format=DocumentFormat.TEXT,
             extracted_text=text,
         )
-        task_parse_document.delay(record.id)
+        task_parse_document.delay(record.id, user_id)
         return record.id
 
     async def request_application_parse(
         self,
         *,
+        user_id: int,
         resume_format: DocumentFormat,
         resume_file: UploadFile,
         job_posting_format: DocumentFormat,
@@ -511,6 +552,7 @@ class DocumentService:
         입력은 컨트롤러에서 형식/필수값 검증을 마친 값이라고 가정한다.
 
         Args:
+            user_id: 이력서를 업로드한 사용자 ID(이력서 소유자).
             resume_format: 이력서 입력 형식.
             resume_file: 업로드된 이력서 파일.
             job_posting_format: 채용공고 입력 형식.
@@ -522,20 +564,73 @@ class DocumentService:
             등록된 이력서/채용공고 문서 ID를 담은 ParseApplicationAccepted.
         """
         resume_document_id, job_posting_document_id = await asyncio.gather(
-            self._request_resume_parse(resume_format, resume_file),
-            self._request_job_posting_parse(job_posting_format, job_posting_file, job_posting_url, job_posting_text),
+            self._request_resume_parse(resume_format, resume_file, user_id),
+            self._request_job_posting_parse(
+                job_posting_format, job_posting_file, job_posting_url, job_posting_text, user_id
+            ),
         )
         return ParseApplicationAccepted(
             resume_document_id=resume_document_id,
             job_posting_document_id=job_posting_document_id,
         )
 
-    async def _request_resume_parse(self, resume_format: DocumentFormat, resume_file: UploadFile) -> int:
+    async def request_resume_parse(
+        self,
+        *,
+        user_id: int,
+        resume_format: DocumentFormat,
+        resume_file: UploadFile,
+    ) -> ParseJobAccepted:
+        """이력서 파일 하나만 저장·등록하고 비동기 파싱 작업을 큐에 올린다.
+
+        입력은 컨트롤러에서 형식/파일 정보 검증을 마친 값이라고 가정한다.
+
+        Args:
+            user_id: 이력서를 업로드한 사용자 ID(이력서 소유자).
+            resume_format: 이력서 입력 형식.
+            resume_file: 업로드된 이력서 파일.
+
+        Returns:
+            등록된 이력서 문서 ID를 담은 ParseJobAccepted.
+        """
+        document_id = await self._request_resume_parse(resume_format, resume_file, user_id)
+        return ParseJobAccepted(document_id=document_id)
+
+    async def request_job_posting_parse(
+        self,
+        *,
+        user_id: int,
+        job_posting_format: DocumentFormat,
+        job_posting_file: UploadFile | None = None,
+        job_posting_url: str | None = None,
+        job_posting_text: str | None = None,
+    ) -> ParseJobAccepted:
+        """채용공고 하나만 저장·등록하고 비동기 파싱 작업을 큐에 올린다.
+
+        입력은 컨트롤러에서 형식/필수값 검증을 마친 값이라고 가정한다.
+
+        Args:
+            user_id: 채용공고를 업로드한 사용자 ID.
+            job_posting_format: 채용공고 입력 형식.
+            job_posting_file: 업로드된 채용공고 파일(파일 입력일 때).
+            job_posting_url: 채용공고 URL(URL 입력일 때).
+            job_posting_text: 채용공고 본문(텍스트 입력일 때).
+
+        Returns:
+            등록된 채용공고 문서 ID를 담은 ParseJobAccepted.
+        """
+        document_id = await self._request_job_posting_parse(
+            job_posting_format, job_posting_file, job_posting_url, job_posting_text, user_id
+        )
+        return ParseJobAccepted(document_id=document_id)
+
+    async def _request_resume_parse(self, resume_format: DocumentFormat, resume_file: UploadFile, user_id: int) -> int:
         """이력서 파일을 저장하고 파싱 작업을 등록한다.
 
         Args:
             resume_format: 이력서 입력 형식.
             resume_file: 업로드된 이력서 파일(파일명·content_type 검증 완료).
+            user_id: 이력서를 업로드한 사용자 ID.
 
         Returns:
             생성된 이력서 문서의 ID.
@@ -555,6 +650,7 @@ class DocumentService:
             file_name=resume_file.filename,
             file_path=str(resume_path),
             content_type=resume_file.content_type,
+            user_id=user_id,
         )
 
     async def _request_job_posting_parse(
@@ -563,6 +659,7 @@ class DocumentService:
         job_posting_file: UploadFile | None,
         job_posting_url: str | None,
         job_posting_text: str | None,
+        user_id: int,
     ) -> int:
         """채용공고를 형식(URL/텍스트/파일)에 맞게 저장·등록한다.
 
@@ -571,16 +668,21 @@ class DocumentService:
             job_posting_file: 업로드된 채용공고 파일(파일 입력일 때).
             job_posting_url: 채용공고 URL(URL 입력일 때).
             job_posting_text: 채용공고 본문(텍스트 입력일 때).
+            user_id: 문서를 업로드한 사용자 ID(파싱 파이프라인에 전달).
 
         Returns:
             생성된 채용공고 문서의 ID.
         """
         if job_posting_format == DocumentFormat.URL:
             assert job_posting_url is not None
-            return await self.request_parse_url(document_type=DocumentKind.JOB_POSTING, url=job_posting_url)
+            return await self.request_parse_url(
+                document_type=DocumentKind.JOB_POSTING, url=job_posting_url, user_id=user_id
+            )
         if job_posting_format == DocumentFormat.TEXT:
             assert job_posting_text is not None
-            return await self.request_parse_text(document_type=DocumentKind.JOB_POSTING, text=job_posting_text)
+            return await self.request_parse_text(
+                document_type=DocumentKind.JOB_POSTING, text=job_posting_text, user_id=user_id
+            )
 
         assert job_posting_file is not None
         assert job_posting_file.filename is not None
@@ -598,6 +700,7 @@ class DocumentService:
             file_name=job_posting_file.filename,
             file_path=str(job_posting_path),
             content_type=job_posting_file.content_type,
+            user_id=user_id,
         )
 
     async def parse(self, input: DocumentInput) -> ParsedDocument:

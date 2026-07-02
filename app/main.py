@@ -10,11 +10,15 @@ from app.ai.classification.document import langchain as classifier_langchain
 from app.ai.extraction import langchain as extraction_langchain
 from app.config.containers import Container
 from app.config.settings import settings
+from app.controllers import auth
 from app.controllers import documents
 from app.services.errors import (
+    AuthConflictError,
     DocumentFileParseError,
     FileTooLargeError,
     InsufficientJobContentError,
+    InvalidCredentialsError,
+    InvalidTokenError,
     UnsupportedDocumentFormatError,
 )
 
@@ -26,6 +30,9 @@ _DOMAIN_EXCEPTION_STATUS: dict[type[Exception], int] = {
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     DocumentFileParseError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     InsufficientJobContentError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    AuthConflictError: status.HTTP_409_CONFLICT,
+    InvalidCredentialsError: status.HTTP_401_UNAUTHORIZED,
+    InvalidTokenError: status.HTTP_401_UNAUTHORIZED,
 }
 
 
@@ -96,10 +103,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 container = Container()
-container.wire(modules=[documents, classifier_langchain, extraction_langchain, vision])
+container.wire(modules=[auth, documents, classifier_langchain, extraction_langchain, vision])
 
 app = FastAPI(title="Fitfolio", lifespan=lifespan)
 # pyrefly: ignore [missing-attribute]
 app.container = container
 _register_exception_handlers(app)
+app.include_router(auth.router)
 app.include_router(documents.router)

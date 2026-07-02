@@ -33,11 +33,18 @@ class ProfilesRepository:
         """
         self._session_factory = session_factory
 
-    async def upsert_resume_profile(self, *, document_id: int, profile: ResumeProfileData) -> ResumeProfile:
+    async def upsert_resume_profile(
+        self,
+        *,
+        document_id: int,
+        user_id: int,
+        profile: ResumeProfileData,
+    ) -> ResumeProfile:
         """이력서 프로필을 문서 ID 기준으로 생성하거나 갱신한다.
 
         Args:
             document_id: 프로필이 속한 문서의 ID.
+            user_id: 이력서를 업로드한 사용자 ID.
             profile: 저장할 이력서 프로필 데이터.
 
         Returns:
@@ -47,13 +54,34 @@ class ProfilesRepository:
         async with self._session_factory() as session:
             record = await session.scalar(select(ResumeProfile).where(ResumeProfile.document_id == document_id))
             if record is None:
-                record = ResumeProfile(document_id=document_id, **values)
+                record = ResumeProfile(document_id=document_id, user_id=user_id, **values)
                 session.add(record)
             else:
+                record.user_id = user_id
                 for field, value in values.items():
                     setattr(record, field, value)
             await session.commit()
             return record
+
+    async def list_resumes(self, *, user_id: int, limit: int = 50) -> list[ResumeProfile]:
+        """특정 사용자가 업로드한 이력서 프로필을 최신순으로 조회한다.
+
+        Args:
+            user_id: 이력서를 조회할 사용자 ID.
+            limit: 최대 결과 수.
+
+        Returns:
+            사용자의 이력서 프로필 목록(등록일 내림차순).
+        """
+        stmt = (
+            select(ResumeProfile)
+            .where(ResumeProfile.user_id == user_id)
+            .order_by(ResumeProfile.created_at.desc())
+            .limit(limit)
+        )
+        async with self._session_factory() as session:
+            rows = await session.scalars(stmt)
+            return list(rows.all())
 
     async def upsert_job_posting_profile(
         self,

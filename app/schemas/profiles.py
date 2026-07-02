@@ -10,6 +10,7 @@ from app.utils import serialize_datetime_in_timezone
 class ResumeProfileData(BaseModel):
     document_text: str
     image_text: str = ""
+    title: str | None = None
     name: str | None = None
     email: str | None = None
     phone: str | None = None
@@ -20,6 +21,8 @@ class ResumeProfileData(BaseModel):
     skills: list[str] = Field(default_factory=list)
     education: list[dict | str] = Field(default_factory=list)
     certifications: list[dict | str] = Field(default_factory=list)
+    links: list[str] = Field(default_factory=list)
+    etc: list[dict | str] = Field(default_factory=list)
     raw_sections: dict = Field(default_factory=dict)
 
 
@@ -52,6 +55,20 @@ class JobPostingProfileData(BaseModel):
 
 
 ProfileData = ResumeProfileData | JobPostingProfileData
+
+
+class ResumeListItem(BaseModel):
+    document_id: int
+    title: str | None = None
+    name: str | None = None
+    email: str | None = None
+    career_summary: str | None = None
+    created_at: datetime
+
+    @field_serializer("created_at", when_used="json")
+    def serialize_response_datetime(self, value: datetime) -> str | None:
+        """API 응답에서는 설정 timezone으로 변환해 직렬화한다."""
+        return serialize_datetime_in_timezone(value, timezone=settings.TIME_ZONE)
 
 
 class JobPostingListItem(BaseModel):

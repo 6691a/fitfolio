@@ -15,3 +15,15 @@ class InsufficientJobContentError(Exception):
 
 class FileTooLargeError(Exception):
     pass
+
+
+class AuthConflictError(Exception):
+    pass
+
+
+class InvalidCredentialsError(Exception):
+    pass
+
+
+class InvalidTokenError(Exception):
+    pass

@@ -15,5 +15,5 @@ class User(BaseModel):
     )
 
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    password: Mapped[str] = mapped_column(String(255))
+    hashed_password: Mapped[str] = mapped_column("password", String(255))
     nickname: Mapped[str] = mapped_column(String(50), unique=True, index=True)

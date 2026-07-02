@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git / 커밋 정책
+
+- **에이전트는 절대 `git commit`을 실행하지 않는다.**
+- 커밋 생성은 항상 사용자가 직접 한다.
+- 변경이 완료되면 작업트리 상태와 검증 결과만 보고하고, 커밋 명령 실행이나 커밋 생성은 제안하지 않는다.
+- 사용자가 명시적으로 커밋을 요청하더라도, 이 저장소의 정책상 커밋은 사용자가 직접 해야 한다고 안내한다.
+
 ## 의존성 주입(DI) 규칙
 
 - 서비스가 사용하는 의존 객체는 `app.config.containers.Container`를 통해 주입받는다.
@@ -26,7 +33,7 @@ Fitfolio는 사용자의 이력서/자기소개서/포트폴리오를 채용공�
 
 - Install deps: `uv sync`
 - Add a dependency: `uv add <package>` (개발 전용은 `uv add --dev <package>`)
-- Run locally (containers): `docker compose -f docker-compose.yml -f compose.local.yml up`
+- Run locally (containers): `just dev` or `docker compose -f docker-compose.yml -f docker-compose.local.yml up`
 - Lint / type / test: `uv run ruff check app` · `uv run pyrefly check` · `uv run pytest`
 - Python >=3.13, 의존성은 `uv`(`pyproject.toml` + `uv.lock`)로만 관리한다. pip/poetry/conda 워크플로를 도입하지 않는다.
 
@@ -110,8 +117,8 @@ app/
 - 모듈을 분리/이동하면 monkeypatch 대상을 "그 이름이 실제로 사용되는 모듈"로 맞춘다(재노출만으로는 패치가 닿지 않는다).
 
 ### 도커
-- `docker-compose.yml` = 배포 지향 base(바인드 마운트·watch·reload 없음).
-- `compose.local.yml` = 로컬 개발 오버레이(코드 변경 시 자동 재시작·바인드 마운트). 자동 병합되지 않으므로 `docker compose -f docker-compose.yml -f compose.local.yml up`로 실행한다. 실 배포는 별도 compose 파일을 사용한다.
+- `docker-compose.yml` = 배포 지향 base/prod compose(바인드 마운트·watch·reload 없음).
+- `docker-compose.local.yml` = 로컬 개발 오버레이(코드 변경 시 자동 재시작·바인드 마운트). 자동 병합되지 않으므로 `just dev` 또는 `docker compose -f docker-compose.yml -f docker-compose.local.yml up`로 실행한다. 실 배포는 `docker-compose.yml`만 사용한다.
 
 ### 설정 / 시크릿
 - 설정은 pydantic-settings + `.env`. `.env.sample`은 키만 남기고 값은 비운다(시크릿 커밋 금지).

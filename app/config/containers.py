@@ -9,6 +9,8 @@ from app.crawlers.wanted import WantedJobPostingCrawler
 from app.database.session import Database
 from app.repositories.documents import DocumentsRepository
 from app.repositories.profiles import ProfilesRepository
+from app.repositories.users import UsersRepository
+from app.services.auth import AuthService
 from app.services.document import DocumentService
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
@@ -60,6 +62,11 @@ class Container(containers.DeclarativeContainer):
         session_factory=database.provided.async_session,
     )
 
+    users_repository = providers.Factory(
+        UsersRepository,
+        session_factory=database.provided.async_session,
+    )
+
     wanted_job_posting_crawler = providers.Factory(WantedJobPostingCrawler)
     saramin_job_posting_crawler = providers.Factory(SaraminJobPostingCrawler)
     job_posting_crawler = providers.Factory(
@@ -77,4 +84,10 @@ class Container(containers.DeclarativeContainer):
         profiles_repository=profiles_repository,
         job_posting_crawler=job_posting_crawler,
         document_classifier=document_classifier,
+    )
+
+    auth_service = providers.Factory(
+        AuthService,
+        users_repository=users_repository,
+        settings=settings,
     )

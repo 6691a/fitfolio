@@ -172,6 +172,13 @@ class ResumeExtractDebug(BaseModel):
     relevant: bool = True
     failure_reason: str | None = None
     text: str
+    title: str | None = Field(
+        default=None,
+        description=(
+            "이력서 제목/헤드라인. 이력서에 명시된 제목이 있으면 그대로 쓰고, 없으면 직무·경력을 반영해 "
+            "간결하게 생성한다. 예: '3년차 백엔드 개발자 이력서', 'AI 서비스 프론트엔드 엔지니어'."
+        ),
+    )
     name: str | None = None
     email: str | None = None
     phone: str | None = None
@@ -182,6 +189,17 @@ class ResumeExtractDebug(BaseModel):
     skills: list[str] = Field(default_factory=list)
     education: list[dict | str] = Field(default_factory=list)
     certifications: list[dict | str] = Field(default_factory=list)
+    links: list[str] = Field(
+        default_factory=list,
+        description="이력서에 포함된 URL 목록. 포트폴리오·GitHub·블로그·링크드인 등. 예: https://github.com/hong",
+    )
+    etc: list[dict | str] = Field(
+        default_factory=list,
+        description=(
+            "위 항목(자기소개·경력요약·경력·프로젝트·스킬·학력·자격증·링크) 어디에도 분류되지 않는 "
+            "기타 정보를 모은다. 분류 불가한 내용만 넣고, 이미 다른 필드에 담은 값은 중복하지 않는다."
+        ),
+    )
     image_texts: list[str] = Field(default_factory=list)
     raw_sections: dict = Field(default_factory=dict)
 

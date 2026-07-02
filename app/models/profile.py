@@ -16,6 +16,11 @@ class ResumeProfile(BaseModel):
         index=True,
         comment="원본 이력서 문서(documents.id). 문서 1개당 이력서 프로필 1개만 가진다.",
     )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        comment="이력서를 업로드한 사용자(users.id). 이력서 목록을 사용자별로 필터링한다.",
+    )
     document_text: Mapped[str] = mapped_column(
         Text,
         comment="문서/페이지 본문에서 추출한 text. 이미지 OCR 텍스트는 포함하지 않는다.",
@@ -24,6 +29,11 @@ class ResumeProfile(BaseModel):
         Text,
         default="",
         comment="이력서 이미지(OCR)에서 추출한 text. 이미지가 없으면 빈 문자열.",
+    )
+    title: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="이력서 제목/헤드라인. 예: '3년차 백엔드 개발자 이력서'.",
     )
     name: Mapped[str | None] = mapped_column(
         String(255),
@@ -74,6 +84,16 @@ class ResumeProfile(BaseModel):
         JSON,
         default=list,
         comment="자격증/수상 목록.",
+    )
+    links: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="이력서에 포함된 URL 목록. 포트폴리오·GitHub·블로그·링크드인 등.",
+    )
+    etc: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="다른 항목으로 분류되지 않는 기타 정보 목록.",
     )
     raw_sections: Mapped[dict] = mapped_column(
         JSON,

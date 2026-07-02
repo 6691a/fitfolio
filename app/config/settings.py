@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     SARAMIN_RELAY_AJAX_PATH: str = "/zf_user/jobs/relay/view-ajax"
     WANTED_HOST_SUFFIX: str = "wanted.co.kr"
     BROWSER_HEADLESS: bool = True  # False면 실제 브라우저 창이 뜸(로컬 디버깅용, docker 안에선 화면 없어 의미 없음)
+    AUTH_SECRET_KEY: str = "change-me-in-local-development-secret"
+    AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    AUTH_ALGORITHM: str = "HS256"
     # 채용공고 URL/이미지 HTTP 요청을 허용할 도메인. env 오버라이드는 JSON 배열로(예: '["saramin.co.kr"]').
     ALLOWED_JOB_DOMAINS: frozenset[str] = frozenset(
         {

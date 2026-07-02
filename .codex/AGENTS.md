@@ -2,6 +2,13 @@
 
 > 구조/파일/규칙을 바꾸면 이 파일과 `.claude/CLAUDE.md`를 **항상 함께 갱신**한다(둘이 어긋나지 않게). 상세 기준은 `.claude/CLAUDE.md`.
 
+## Git / 커밋 정책
+
+- **에이전트는 절대 `git commit`을 실행하지 않는다.**
+- 커밋 생성은 항상 사용자가 직접 한다.
+- 변경이 완료되면 작업트리 상태와 검증 결과만 보고하고, 커밋 명령 실행이나 커밋 생성은 제안하지 않는다.
+- 사용자가 명시적으로 커밋을 요청하더라도, 이 저장소의 정책상 커밋은 사용자가 직접 해야 한다고 안내한다.
+
 ## 디렉터리 · 파일 구조 컨벤션 (실제 구현 기준)
 
 레이어드 구조. 책임별 디렉터리:
@@ -29,7 +36,7 @@ app/
 - 패키지화: 모듈이 커지거나 역할이 갈리면 폴더로 쪼개고 `__init__.py`에서 재노출해 import 경로를 유지한다(예: `ai/classification/document/`, `ai/extraction/`).
 - docstring: 모든 함수/메서드에 구글 스타일 한글. 직접 `raise`가 있으면 `Raises:` 추가. 클래스/모듈 docstring은 생략.
 - 검증: `uv run ruff check app`(120) · `uv run pyrefly check`(0 errors) · `uv run pytest`. 개발 전용 의존성은 `uv add --dev`.
-- 도커: `docker-compose.yml`(배포 base) + `compose.local.yml`(로컬 오버레이, `-f`로 함께 지정). 시크릿은 `.env`, `.env.sample`은 값 비움.
+- 도커: `docker-compose.yml`(배포/prod base) + `docker-compose.local.yml`(로컬 개발 오버레이, `just dev` 또는 `-f`로 함께 지정). 시크릿은 `.env`, `.env.sample`은 값 비움.
 - 모듈을 이동/분리하면 테스트 monkeypatch 대상을 "실제 사용되는 모듈"로 맞춘다(재노출만으로는 패치가 닿지 않음).
 - HTTP 상태코드는 raw 숫자(예: `422`)가 아니라 `fastapi.status` 상수(예: `status.HTTP_422_UNPROCESSABLE_ENTITY`)를 쓴다. 코드·테스트 모두 동일.
 

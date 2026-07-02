@@ -1,19 +1,16 @@
 set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
 
-up service="":
-    docker compose up -d {{service}}
+dev service="":
+    docker compose -f docker-compose.yml -f docker-compose.local.yml up -d {{service}}
 
-up-build service="":
-    docker compose up -d --build {{service}}
+dev-build service="":
+    docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build {{service}}
 
 down:
     docker compose down
 
 down-v:
     docker compose down -v
-
-restart:
-    docker compose restart
 
 migrate:
     docker compose exec api uv run alembic upgrade head
