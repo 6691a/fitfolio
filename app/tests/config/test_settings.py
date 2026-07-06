@@ -1,4 +1,19 @@
+import pytest
+from pydantic import ValidationError
+
 from app.config.settings import Settings
+
+
+def test_moved_settings_are_required_from_env(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+    monkeypatch.delenv("UPLOAD_DIR", raising=False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(_env_file=None)
+
+    assert "UPLOAD_DIR" in str(exc_info.value)
 
 
 def test_document_extraction_settings_can_be_loaded_from_env(monkeypatch):
@@ -18,7 +33,6 @@ def test_document_extraction_settings_can_be_loaded_from_env(monkeypatch):
     monkeypatch.setenv("SARAMIN_IMAGE_HOST_SUFFIX", "example-image.co.kr")
     monkeypatch.setenv("SARAMIN_RELAY_AJAX_PATH", "/custom/ajax")
     monkeypatch.setenv("WANTED_HOST_SUFFIX", "example-wanted.co.kr")
-    monkeypatch.setenv("BROWSER_HEADLESS", "false")
     monkeypatch.setenv("JOB_POSTING_DEFAULT_TIMEZONE", "UTC")
     monkeypatch.setenv("TIME_ZONE", "Asia/Tokyo")
 
@@ -37,7 +51,6 @@ def test_document_extraction_settings_can_be_loaded_from_env(monkeypatch):
     assert settings.SARAMIN_IMAGE_HOST_SUFFIX == "example-image.co.kr"
     assert settings.SARAMIN_RELAY_AJAX_PATH == "/custom/ajax"
     assert settings.WANTED_HOST_SUFFIX == "example-wanted.co.kr"
-    assert settings.BROWSER_HEADLESS is False
     assert settings.JOB_POSTING_DEFAULT_TIMEZONE == "UTC"
     assert settings.TIME_ZONE == "Asia/Tokyo"
 

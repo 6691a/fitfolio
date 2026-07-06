@@ -6,9 +6,7 @@ from streamlit_app.views.analysis import render_analysis_result
 
 FILE_EXTENSIONS = {
     DocumentFormat.PDF: ["pdf"],
-    DocumentFormat.IMAGE: ["png", "jpg", "jpeg"],
     DocumentFormat.DOCX: ["docx"],
-    DocumentFormat.PPT: ["ppt", "pptx"],
 }
 
 JOB_POSTING_FORMAT_OPTIONS = [*FILE_EXTENSIONS, DocumentFormat.URL]
@@ -62,27 +60,34 @@ def render_analyze_page() -> None:
         )
 
     ready = bool(job_posting_url) if job_posting_format == DocumentFormat.URL else job_posting_file is not None
-    is_requesting = st.session_state.get("is_requesting", False)
+    is_requesting = bool(st.session_state.get("is_requesting", False))
 
     button_slot = st.empty()
 
-    if button_slot.button("분석 시작", type="primary", disabled=not ready or is_requesting):
+    button_label = "분석 중..." if is_requesting else "분석 시작"
+    if button_slot.button(button_label, type="primary", disabled=not ready or is_requesting):
         st.session_state["is_requesting"] = True
         st.session_state.pop("analysis_ids", None)
         st.session_state.pop("analysis_error", None)
-        button_slot.button("분석 중...", type="primary", disabled=True)
+        st.rerun()
 
+    if is_requesting:
         try:
-            data = {"job_posting_format": job_posting_format.value}
-            files = {}
-            if job_posting_format == DocumentFormat.URL:
-                assert job_posting_url is not None
-                data["job_posting_url"] = job_posting_url
-            else:
-                assert job_posting_file is not None
-                files["job_posting_file"] = (job_posting_file.name, job_posting_file.getvalue(), job_posting_file.type)
+            with st.spinner("채용공고를 업로드하고 있습니다..."):
+                data = {"job_posting_format": job_posting_format.value}
+                files = {}
+                if job_posting_format == DocumentFormat.URL:
+                    assert job_posting_url is not None
+                    data["job_posting_url"] = job_posting_url
+                else:
+                    assert job_posting_file is not None
+                    files["job_posting_file"] = (
+                        job_posting_file.name,
+                        job_posting_file.getvalue(),
+                        job_posting_file.type,
+                    )
 
-            job_posting_document_id = upload_job_posting(data, files)
+                job_posting_document_id = upload_job_posting(data, files)
             st.session_state["analysis_ids"] = {
                 "resume": resume_document_id,
                 "job_posting": job_posting_document_id,

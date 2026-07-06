@@ -124,34 +124,9 @@ class DocumentService:
             document_id: 처리할 문서 ID(없으면 아무 것도 하지 않음).
             user_id: 문서를 업로드한 사용자 ID(이력서 프로필 저장에 사용).
         """
-        document = await self._documents_repository.get(document_id)
-        if document is None:
-            return
+        from app.ai.graph.document import run_document_graph
 
-        await self._documents_repository.mark_started(document_id)
-
-        document_input = self._build_document_input(document)
-
-        try:
-            parsed = await self.parse(document_input)
-        except Exception as exc:
-            logger.exception("문서 파싱 실패 document_id=%s", document_id)
-            await self._documents_repository.mark_failed(document_id, error=str(exc))
-            return
-
-        if not await self.verify_kind(
-            document_id=document_id,
-            expected_kind=DocumentKind(document.document_type),
-            parsed=parsed,
-        ):
-            return
-
-        await self._documents_repository.mark_done(
-            document_id,
-            extracted_text=parsed.extracted_text,
-            metadata=parsed.metadata,
-        )
-        await self.store_profile(document, parsed, user_id=user_id)
+        await run_document_graph(self, document_id=document_id, user_id=user_id)
 
     def _build_document_input(self, document) -> DocumentInput:
         """DB 문서 레코드를 형식에 맞는 파싱 입력 스키마로 변환한다.
@@ -353,11 +328,12 @@ class DocumentService:
             for profile in profiles
         ]
 
-    async def get_parse_status(self, document_id: int) -> ParseJobStatus | None:
+    async def get_parse_status(self, document_id: int, *, user_id: int | None = None) -> ParseJobStatus | None:
         """문서 파싱 진행 상태를 조회하고 완료 시 결과까지 만들어 반환한다.
 
         Args:
             document_id: 상태를 조회할 문서 ID.
+            user_id: 요청한 사용자 ID. 이력서 문서면 이 값과 업로드 사용자가 일치해야 한다.
 
         Returns:
             상태(및 DONE이면 결과, FAILED면 오류)를 담은 ParseJobStatus. 문서가 없으면 None.
@@ -367,6 +343,13 @@ class DocumentService:
         """
         record = await self._documents_repository.get(document_id)
         if record is None:
+            return None
+        if (
+            user_id is not None
+            and DocumentKind(record.document_type) == DocumentKind.RESUME
+            and record.user_id is not None
+            and record.user_id != user_id
+        ):
             return None
 
         if record.status == ParseStatus.DONE:
@@ -478,6 +461,7 @@ class DocumentService:
         record = await self._documents_repository.create(
             document_type=document_type,
             format=format,
+            user_id=user_id,
             file_name=file_name,
             file_path=file_path,
             content_type=content_type,
@@ -531,6 +515,7 @@ class DocumentService:
         record = await self._documents_repository.create(
             document_type=document_type,
             format=DocumentFormat.TEXT,
+            user_id=user_id,
             extracted_text=text,
         )
         task_parse_document.delay(record.id, user_id)

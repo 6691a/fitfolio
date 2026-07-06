@@ -9,6 +9,30 @@
 - 변경이 완료되면 작업트리 상태와 검증 결과만 보고하고, 커밋 명령 실행이나 커밋 생성은 제안하지 않는다.
 - 사용자가 명시적으로 커밋을 요청하더라도, 이 저장소의 정책상 커밋은 사용자가 직접 해야 한다고 안내한다.
 
+## 프로젝트 개요
+
+- Fitfolio는 사용자의 이력서/자기소개서/포트폴리오와 채용공고(PDF·이미지·URL·붙여넣기 텍스트)를 비교해 적합도와 개선 피드백을 주는 것을 목표로 한다.
+- 현재 코드는 FastAPI API(`app/`), Celery 워커(`app/tasks/`, `app/celery_app.py`), Streamlit 프런트(`streamlit_app/`), PostgreSQL(pgvector)·Redis 기반 로컬 인프라로 구성된다.
+- Python은 `>=3.13`을 사용하고, 의존성은 `uv`(`pyproject.toml` + `uv.lock`)로만 관리한다. pip/poetry/conda 워크플로를 새로 도입하지 않는다.
+- 설정은 pydantic-settings + `.env`를 사용한다. 로컬 시작 전 `.env.sample`을 기준으로 `.env`를 준비하고, 시크릿 값은 커밋하지 않는다.
+
+## 기본 실행 · 개발 명령
+
+- 의존성 설치/동기화: `uv sync`
+- 로컬 전체 실행(Docker Compose): `just dev`
+  - 내부적으로 `docker-compose.yml` + `docker-compose.local.yml` 오버레이를 함께 올린다.
+  - 주요 포트: API `http://localhost:8000`, Streamlit `http://localhost:8501`, PostgreSQL `localhost:5432`, Redis `localhost:6379`.
+- 특정 서비스만 실행: `just dev api`, `just dev worker`, `just dev front`, `just dev db`, `just dev redis`
+- 이미지 재빌드 포함 실행: `just dev-build` 또는 `just dev-build api`
+- 종료: `just down`
+- 볼륨까지 삭제하며 종료: `just down-v`
+- DB 마이그레이션 적용: `just migrate`
+- 마이그레이션 생성: `just makemigrations "message"`
+- Streamlit만 로컬 프로세스로 실행: `just front`
+  - API는 별도로 `localhost:8000`에서 떠 있어야 하고, `API_BASE_URL`은 `.env`를 따른다.
+- LLM 트레이싱: LangSmith(SaaS). `.env`의 `LANGSMITH_*` env로 자동 동작(`LANGSMITH_TRACING=true`로 활성화). 로컬 스택 없음.
+- 검증: `uv run ruff check app` · `uv run pyrefly check` · `uv run pytest`
+
 ## 디렉터리 · 파일 구조 컨벤션 (실제 구현 기준)
 
 레이어드 구조. 책임별 디렉터리:
@@ -22,14 +46,14 @@ app/
 ├─ crawlers/      # 채용공고 크롤러(도메인별 파일: saramin.py, wanted.py / 공통: job_postings.py, utils.py)
 ├─ ai/            # LLM 연동(classification/document, extraction, vision)
 ├─ tasks/         # Celery 태스크 — 진입점 + DI/세션 배선만
-├─ cache/ · database/ · schemas/ · models/ · security/
+├─ database/ · schemas/ · models/ · security/
 ├─ utils.py       # 범용 순수 유틸(clean_text 등)
 └─ tests/
 ```
 
 - 계층 책임: 컨트롤러는 얇게, 핵심 로직은 services, tasks는 진입점+배선만, repositories는 DB만. **컨트롤러는 레포지토리를 직접 호출하지 않고 서비스를 주입해 서비스가 레포지토리를 다룬다**(예: `get_parse_status` → `DocumentService.get_parse_status`, 컨트롤러는 `None`이면 404로만 매핑).
 - 예외: 도메인 예외는 `app/services/errors.py`에 모아 정의하고(`UnsupportedDocumentFormatError`·`FileTooLargeError`·`DocumentFileParseError`·`InsufficientJobContentError`) 서비스에서 던진다. `HTTPException`은 만들지 않는다. import는 `from app.services.errors import ...`(`app.services.document` 재노출에 의존 금지). HTTP 매핑은 `app/main.py` 전역 핸들러(`_DOMAIN_EXCEPTION_STATUS`)에 모은다(새 예외는 여기 등록). 컨트롤러는 입력 검증·404에만 `HTTPException` 사용.
-- 실패 처리·로깅: **조용한 fail-soft 금지** — `except` 폴백(기본값·`None`·빈 결과·`pass`)은 반드시 원인 로깅(외부 서비스/AI/임베딩 실패는 `warning`+, 기대 가능한 단건 스킵은 info/debug). 성공 로그는 Langfuse가 담당하므로 중복 금지, **실패·폴백 로깅은 코드 책임**(Langfuse 안 닿는 임베딩 실패는 특히 필수).
+- 실패 처리·로깅: **조용한 fail-soft 금지** — `except` 폴백(기본값·`None`·빈 결과·`pass`)은 반드시 원인 로깅(외부 서비스/AI/임베딩 실패는 `warning`+, 기대 가능한 단건 스킵은 info/debug). 성공 로그는 LangSmith가 담당하므로 중복 금지, **실패·폴백 로깅은 코드 책임**(LangSmith 안 닿는 임베딩 실패는 특히 필수).
 - 상태코드: 코딩된(예상 가능한) 실패는 500이 아니라 도메인 예외 → 4xx/5xx로(예: 외부 의존 서비스 일시 장애 → 503; 빈 결과로 감추지 않음). 500은 *예기치 못한* 예외에만 — `app/main.py` catch-all(`handle_unexpected_error`)이 `logger.exception`(트레이스백)으로 남기고 내부 메시지 비노출 500을 반환한다. 핸들러 로깅 레벨: 5xx=`error`/`exception`, 4xx=`info`.
 - DI: 의존 객체는 `Container`로 주입. 인프라는 얇은 래퍼 클래스 + `providers.Singleton(클래스)`(예: `Database`, `RedisCache`). 워커는 `worker_database`(Factory)를 쓰고 `document_service` provider로 조립하되 세션에 묶인 repo만 호출 시점에 덮어쓴다.
 - 유틸/네이밍: 상태 없는 순수 함수는 클래스/ABC 말고 모듈 함수로. 공유 범용은 `app/utils.py`, 도메인 전용은 그 도메인의 `utils.py`로(중복 제거). 외부에서 import하는 함수/상수는 `_` 없이, 모듈 내부 전용만 `_`. **폴더 이름에는 `_`를 쓰지 않는다.**

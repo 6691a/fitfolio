@@ -63,6 +63,30 @@ class ProfilesRepository:
             await session.commit()
             return record
 
+    async def get_resume_profile(self, *, document_id: int) -> ResumeProfile | None:
+        """문서 ID로 이력서 프로필 단건을 조회한다.
+
+        Args:
+            document_id: 조회할 이력서 문서 ID.
+
+        Returns:
+            ResumeProfile 레코드, 없으면 None.
+        """
+        async with self._session_factory() as session:
+            return await session.scalar(select(ResumeProfile).where(ResumeProfile.document_id == document_id))
+
+    async def get_job_posting_profile(self, *, document_id: int) -> JobPostingProfile | None:
+        """문서 ID로 채용공고 프로필 단건을 조회한다.
+
+        Args:
+            document_id: 조회할 채용공고 문서 ID.
+
+        Returns:
+            JobPostingProfile 레코드, 없으면 None.
+        """
+        async with self._session_factory() as session:
+            return await session.scalar(select(JobPostingProfile).where(JobPostingProfile.document_id == document_id))
+
     async def list_resumes(self, *, user_id: int, limit: int = 50) -> list[ResumeProfile]:
         """특정 사용자가 업로드한 이력서 프로필을 최신순으로 조회한다.
 

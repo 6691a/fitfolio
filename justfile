@@ -20,15 +20,3 @@ makemigrations message:
 
 front:
     uv run python -m streamlit run streamlit_app/main.py
-
-langfuse-up:
-    docker compose --env-file .env.langfuse -f docker-compose.langfuse.yml up -d
-
-langfuse-down:
-    docker compose --env-file .env.langfuse -f docker-compose.langfuse.yml down
-
-langfuse-down-v:
-    docker compose --env-file .env.langfuse -f docker-compose.langfuse.yml down -v
-
-langfuse-logs:
-    docker compose --env-file .env.langfuse -f docker-compose.langfuse.yml logs -f langfuse-web langfuse-worker

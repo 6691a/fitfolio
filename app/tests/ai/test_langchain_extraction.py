@@ -1,11 +1,9 @@
 from typing import Any
 
 import pytest
-from dependency_injector import providers
 from pydantic import BaseModel
 
 from app.ai.extraction import langchain as extraction_module
-from app.config.containers import Container
 
 
 class FakeSchema(BaseModel):
@@ -30,24 +28,16 @@ class FakeChatGoogleGenerativeAI:
 
 
 @pytest.mark.asyncio
-async def test_structured_output_passes_langfuse_handler_to_llm(monkeypatch):
-    handler = object()
+async def test_structured_output_passes_trace_config_to_llm(monkeypatch):
     monkeypatch.setattr(extraction_module, "ChatGoogleGenerativeAI", FakeChatGoogleGenerativeAI)
-    container = Container()
-    container.langfuse_handler.override(providers.Object(handler))
-    container.wire(modules=[extraction_module])
 
-    try:
-        result = await extraction_module.structured_output(
-            FakeSchema,
-            "instruction",
-            "text",
-            {"fallback": True},
-        )
-    finally:
-        container.unwire()
+    result = await extraction_module.structured_output(
+        FakeSchema,
+        "instruction",
+        "text",
+        {"fallback": True},
+    )
 
     assert result == FakeSchema(value="ok")
-    assert FakeStructuredLLM.config["callbacks"] == [handler]
     assert FakeStructuredLLM.config["run_name"] == "structured_output"
     assert FakeStructuredLLM.config["metadata"]["schema"] == "FakeSchema"

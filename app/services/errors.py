@@ -17,6 +17,18 @@ class FileTooLargeError(Exception):
     pass
 
 
+class ProfileNotReadyError(Exception):
+    pass
+
+
+class AnalysisNotReadyError(Exception):
+    pass
+
+
+class ResumeNotFoundError(Exception):
+    pass
+
+
 class AuthConflictError(Exception):
     pass
 

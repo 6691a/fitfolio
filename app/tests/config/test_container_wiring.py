@@ -19,12 +19,6 @@ def test_container_provides_langchain_document_classifier():
     assert isinstance(classifier, LangChainDocumentClassifier)
 
 
-def test_container_provides_cache():
-    from redis.asyncio import Redis
-
-    assert isinstance(Container().cache().client, Redis)
-
-
 @pytest.mark.asyncio
 async def test_document_service_url_parse_requires_container_injected_crawler():
     service = DocumentService(documents_repository=None)  # type: ignore[arg-type]

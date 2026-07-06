@@ -39,6 +39,7 @@ class DocumentsRepository:
         *,
         document_type: DocumentKind,
         format: DocumentFormat,
+        user_id: int | None = None,
         file_name: str | None = None,
         file_path: str | None = None,
         content_type: str | None = None,
@@ -50,6 +51,7 @@ class DocumentsRepository:
         Args:
             document_type: 문서 종류(이력서/채용공고).
             format: 입력 형식(PDF/URL/TEXT 등).
+            user_id: 문서를 업로드한 사용자 ID.
             file_name: 업로드 원본 파일명(파일 입력일 때).
             file_path: 저장된 파일 경로(파일 입력일 때).
             content_type: 파일 MIME 타입(파일 입력일 때).
@@ -61,6 +63,7 @@ class DocumentsRepository:
         """
         async with self._session_factory() as session:
             record = Document(
+                user_id=user_id,
                 document_type=document_type,
                 format=format.value,
                 file_name=file_name,
@@ -144,6 +147,7 @@ class DocumentsRepository:
 
         async with self._session_factory() as session:
             record = Document(
+                user_id=None,
                 document_type=document_type,
                 format=DocumentFormat.URL.value,
                 source_url=source_url,

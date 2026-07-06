@@ -133,6 +133,27 @@ async def test_list_resumes_endpoint_delegates_to_service():
 
 
 @pytest.mark.asyncio
+async def test_get_parse_status_passes_current_user_and_returns_404_when_hidden():
+    class FakeDocumentService:
+        async def get_parse_status(self, document_id, *, user_id):
+            assert document_id == 99
+            assert user_id == 1
+            return None
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with (
+            container.document_service.override(FakeDocumentService()),
+            container.auth_service.override(FakeAuthService()),
+        ):
+            response = await client.get(
+                "/documents/parse/99",
+                headers={"Authorization": "Bearer valid-token"},
+            )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
 async def test_parse_endpoint_rejects_resume_url():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with container.auth_service.override(FakeAuthService()):

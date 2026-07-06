@@ -1,9 +1,12 @@
 import streamlit as st
 
-from streamlit_app.state import clear_auth_state, is_authenticated
+from streamlit_app.state import clear_auth_state, is_authenticated, sync_auth_cookie
 from streamlit_app.views import (
+    SELECTED_ANALYSIS_KEY,
     SELECTED_JOB_KEY,
     SELECTED_RESUME_KEY,
+    render_analysis_detail,
+    render_analysis_history_list,
     render_analyze_page,
     render_job_posting_detail,
     render_job_posting_list,
@@ -14,6 +17,7 @@ from streamlit_app.views import (
 )
 
 st.set_page_config(page_title="Fitfolio", layout="centered")
+sync_auth_cookie()
 
 
 def _center_link(page, label: str) -> None:
@@ -50,8 +54,9 @@ def render_authenticated_header() -> None:
 
 def render_authenticated_navigation() -> None:
     """인증 후 주요 화면으로 이동하는 버튼들을 항상 같은 위치에 렌더링한다."""
-    analyze_col, search_col, resumes_col = st.columns(3)
+    analyze_col, history_col, search_col, resumes_col = st.columns(4)
     analyze_col.page_link(analyze_page, label="분석하기", width="stretch")
+    history_col.page_link(history_page, label="분석 이력", width="stretch")
     search_col.page_link(search_page, label="공고 검색", width="stretch")
     resumes_col.page_link(resumes_page, label="내 이력서 관리", width="stretch")
     st.divider()
@@ -109,6 +114,26 @@ def render_job_detail_route() -> None:
         st.switch_page(search_page)
 
 
+def render_history_route() -> None:
+    """분석 이력 목록 URL 페이지. 행 선택 시 분석 상세 페이지로 이동한다."""
+    _authenticated_frame()
+    selected = render_analysis_history_list()
+    if selected is not None:
+        st.session_state[SELECTED_ANALYSIS_KEY] = selected
+        st.switch_page(analysis_detail_page)
+
+
+def render_analysis_detail_route() -> None:
+    """선택한 분석 상세 URL 페이지. 선택이 없으면 목록으로 되돌린다."""
+    _authenticated_frame()
+    analysis_id = st.session_state.get(SELECTED_ANALYSIS_KEY)
+    if analysis_id is None:
+        st.switch_page(history_page)
+    if render_analysis_detail(analysis_id):
+        st.session_state.pop(SELECTED_ANALYSIS_KEY, None)
+        st.switch_page(history_page)
+
+
 def render_resumes_route() -> None:
     """내 이력서 목록 URL 페이지. 행 선택 시 이력서 상세 페이지로 이동한다."""
     _authenticated_frame()
@@ -154,6 +179,18 @@ job_detail_page = st.Page(
     url_path="job-posting",
     visibility="hidden",
 )
+history_page = st.Page(
+    render_history_route,
+    title="분석 이력",
+    url_path="history",
+    visibility="hidden",
+)
+analysis_detail_page = st.Page(
+    render_analysis_detail_route,
+    title="분석 결과",
+    url_path="analysis",
+    visibility="hidden",
+)
 resumes_page = st.Page(
     render_resumes_route,
     title="내 이력서",
@@ -172,6 +209,8 @@ page = st.navigation(
         login_page,
         signup_page,
         analyze_page,
+        history_page,
+        analysis_detail_page,
         search_page,
         job_detail_page,
         resumes_page,

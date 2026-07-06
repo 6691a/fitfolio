@@ -14,4 +14,6 @@ celery_app = Celery(
 celery_app.autodiscover_tasks(["app"])
 
 container = Container()
-container.wire(modules=["app.tasks.documents", classifier_langchain, extraction_langchain, vision])
+container.wire(
+    modules=["app.tasks.documents", "app.tasks.analyses", classifier_langchain, extraction_langchain, vision]
+)

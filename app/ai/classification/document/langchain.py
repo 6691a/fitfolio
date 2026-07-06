@@ -1,11 +1,7 @@
-from typing import Any
-
-from dependency_injector.wiring import Provide, inject
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.ai.classification.document.errors import DocumentClassificationError
-from app.ai.langfuse import langfuse_config
 from app.config.settings import settings
 from app.schemas.documents import DocumentClassification, DocumentKind
 
@@ -23,20 +19,16 @@ SYSTEM = (
 
 
 class LangChainDocumentClassifier:
-    @inject
     async def classify(
         self,
         text: str,
         expected_kind: DocumentKind,
-        # Container를 직접 import하면 순환참조(containers→services/ai→containers)라 provider 이름(문자열)으로 주입한다.
-        langfuse_handler: Any = Provide["langfuse_handler"],
     ) -> DocumentClassification:
         """Gemini로 텍스트가 기대 문서 종류와 일치하는지 판별한다.
 
         Args:
             text: 판별할 문서 텍스트.
             expected_kind: 기대하는 문서 종류.
-            langfuse_handler: 컨테이너에서 주입되는 LangChain callback handler.
 
         Returns:
             기대 종류 일치 여부와 신뢰도를 담은 DocumentClassification.
@@ -62,11 +54,10 @@ class LangChainDocumentClassifier:
                     f"<document_text>\n{text[: settings.DOCUMENT_MAX_EXTRACTED_CHARS]}\n</document_text>"
                 )
             )
-            config = langfuse_config(
-                langfuse_handler,
-                run_name="document_classification",
-                metadata={"expected_kind": expected_kind.value, "text_len": len(text)},
-            )
+            config = {
+                "run_name": "document_classification",
+                "metadata": {"expected_kind": expected_kind.value, "text_len": len(text)},
+            }
             result = await llm.ainvoke([SystemMessage(content=SYSTEM), message], config=config)
         except Exception as exc:
             raise DocumentClassificationError(str(exc)) from exc

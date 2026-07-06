@@ -223,7 +223,7 @@ async def list_resumes(
 @inject
 async def get_parse_status(
     document_id: int,
-    _current_user: PublicUser = Depends(get_current_user),
+    current_user: PublicUser = Depends(get_current_user),
     document: DocumentService = Depends(Provide[Container.document_service]),
 ):
     """문서 파싱 진행 상태를 조회하고 완료 시 결과를 함께 반환한다.
@@ -238,7 +238,7 @@ async def get_parse_status(
     Raises:
         HTTPException: 해당 문서를 찾을 수 없을 때(404).
     """
-    job_status = await document.get_parse_status(document_id)
+    job_status = await document.get_parse_status(document_id, user_id=current_user.id)
     if job_status is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "문서를 찾을 수 없습니다")
     return job_status

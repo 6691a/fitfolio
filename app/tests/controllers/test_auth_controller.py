@@ -51,6 +51,20 @@ class FakeAuthService:
         )
 
 
+def test_auth_me_route_is_registered_once():
+    all_routes = []
+    for route in app.routes:
+        original_router = getattr(route, "original_router", None)
+        all_routes.extend(getattr(original_router, "routes", []) if original_router is not None else [route])
+    routes = [
+        route
+        for route in all_routes
+        if getattr(route, "path", None) == "/auth/me" and "GET" in getattr(route, "methods", set())
+    ]
+
+    assert len(routes) == 1
+
+
 @pytest.mark.asyncio
 async def test_signup_endpoint_delegates_to_auth_service():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

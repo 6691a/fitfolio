@@ -64,7 +64,6 @@ async def login(
     return await auth.login(payload)
 
 
-@router.get("/me", response_model=PublicUser)
 @inject
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),

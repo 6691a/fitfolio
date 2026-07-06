@@ -1,13 +1,10 @@
 import base64
 import logging
-from typing import Any
 
-from dependency_injector.wiring import Provide, inject
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 
-from app.ai.langfuse import langfuse_config
 from app.config.settings import settings
 from app.schemas.documents import DocumentKind
 
@@ -31,13 +28,10 @@ class ImageContent(BaseModel):
     content: str = Field(default="", description="관련 있으면 추출한 텍스트, 아니면 빈 문자열")
 
 
-@inject
 async def extract_image_content(
     image_bytes: bytes,
     mime: str,
     kind: DocumentKind,
-    # Container를 직접 import하면 순환참조(containers→services/ai→containers)라 provider 이름(문자열)으로 주입한다.
-    langfuse_handler: Any = Provide["langfuse_handler"],
 ) -> ImageContent:
     """이미지 1장을 Gemini 비전에 보내 관련성 판단과 텍스트 추출을 수행한다.
 
@@ -47,7 +41,6 @@ async def extract_image_content(
         image_bytes: 분석할 이미지의 원본 바이트.
         mime: 이미지의 MIME 타입(예: image/png).
         kind: 이미지가 속한 문서 종류(이력서/채용공고).
-        langfuse_handler: 컨테이너에서 주입되는 LangChain callback handler.
 
     Returns:
         관련성 여부와 추출 텍스트를 담은 ImageContent. 실패 시 relevant=False.
@@ -65,11 +58,10 @@ async def extract_image_content(
                 {"type": "image_url", "image_url": data_url},
             ]
         )
-        config = langfuse_config(
-            langfuse_handler,
-            run_name="image_content_extraction",
-            metadata={"document_kind": kind.value, "mime": mime, "image_bytes": len(image_bytes)},
-        )
+        config = {
+            "run_name": "image_content_extraction",
+            "metadata": {"document_kind": kind.value, "mime": mime, "image_bytes": len(image_bytes)},
+        }
         result = await llm.ainvoke([SystemMessage(content=_SYSTEM), message], config=config)
         if isinstance(result, ImageContent):
             return result

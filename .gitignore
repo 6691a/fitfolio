@@ -1,7 +1,7 @@
 .env
-.env.langfuse
 __pycache__/
 .idea/
 .claude/settings.local.json
 .codex/config.toml
 /data
+

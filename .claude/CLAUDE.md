@@ -31,11 +31,23 @@ Fitfolio는 사용자의 이력서/자기소개서/포트폴리오를 채용공�
 
 ## Commands
 
-- Install deps: `uv sync`
-- Add a dependency: `uv add <package>` (개발 전용은 `uv add --dev <package>`)
-- Run locally (containers): `just dev` or `docker compose -f docker-compose.yml -f docker-compose.local.yml up`
-- Lint / type / test: `uv run ruff check app` · `uv run pyrefly check` · `uv run pytest`
 - Python >=3.13, 의존성은 `uv`(`pyproject.toml` + `uv.lock`)로만 관리한다. pip/poetry/conda 워크플로를 도입하지 않는다.
+- 로컬 시작 전 `.env.sample`을 기준으로 `.env`를 준비한다. 시크릿 값은 커밋하지 않는다.
+- Install/sync deps: `uv sync`
+- Add a dependency: `uv add <package>` (개발 전용은 `uv add --dev <package>`)
+- Run all local services: `just dev`
+  - 내부적으로 `docker-compose.yml` + `docker-compose.local.yml` 오버레이를 함께 올린다.
+  - 주요 포트: API `http://localhost:8000`, Streamlit `http://localhost:8501`, PostgreSQL `localhost:5432`, Redis `localhost:6379`.
+- Run one service: `just dev api`, `just dev worker`, `just dev front`, `just dev db`, `just dev redis`
+- Rebuild while starting: `just dev-build` or `just dev-build api`
+- Stop containers: `just down`
+- Stop and remove volumes: `just down-v`
+- Apply DB migrations: `just migrate`
+- Create a migration: `just makemigrations "message"`
+- Run only Streamlit as a local process: `just front`
+  - API는 별도로 `localhost:8000`에서 떠 있어야 하고, `API_BASE_URL`은 `.env`를 따른다.
+- LLM 트레이싱은 LangSmith를 쓴다(SaaS). `.env`의 `LANGSMITH_*` env 변수로 자동 동작하며, 켜려면 `LANGSMITH_TRACING=true`. 별도 로컬 스택은 없다.
+- Lint / type / test: `uv run ruff check app` · `uv run pyrefly check` · `uv run pytest`
 
 테스트는 `app/tests/`에 있고 pytest로 돌린다. LLM/외부 호출 테스트는 실제 모델을 부르지 말고 가짜 분류기/구조화 추출이나 `app.container.<provider>.override(...)`로 대체한다.
 
@@ -54,7 +66,6 @@ app/
 ├─ crawlers/      # 채용공고 크롤러 (도메인별 파일 분리)
 ├─ ai/            # LLM 연동 (문서 분류기·구조화 추출·비전)
 ├─ tasks/         # Celery 태스크 — 진입점 + DI/세션 배선만
-├─ cache/         # Redis 클라이언트
 ├─ database/      # 엔진/세션
 ├─ schemas/       # Pydantic 계약(요청/응답·스테이지 간 데이터)
 ├─ models/        # SQLAlchemy ORM 모델
@@ -77,7 +88,7 @@ app/
 
 #### 실패 처리 · 로깅 정책 (중요)
 - **실패를 조용히 삼키지 않는다.** `except`로 폴백(기본값 반환·`None`·빈 결과·`pass`)하는 경로는 **반드시 원인을 로깅**한다. 최소 `logger.warning("...: error=%s", exc)`로 무엇이/왜 실패했는지 남긴다. fail-soft(전체를 막지 않으려 폴백)는 허용하지만, "조용한 fail-soft"는 금지다.
-- 성공 경로의 결과/요청 로그는 Langfuse 트레이스가 담당하므로 중복 로깅하지 않는다. **로깅은 실패·폴백 경로의 책임**이다(예: AI 구조화 실패 후 규칙 폴백, 비전/임베딩 호출 실패, 크롤러 폴백). Langfuse가 닿지 않는 경로(임베딩 등)의 실패는 특히 반드시 로깅한다.
+- 성공 경로의 결과/요청 로그는 LangSmith 트레이스가 담당하므로 중복 로깅하지 않는다. **로깅은 실패·폴백 경로의 책임**이다(예: AI 구조화 실패 후 규칙 폴백, 비전/임베딩 호출 실패, 크롤러 폴백). LangSmith가 닿지 않는 경로(임베딩 등)의 실패는 특히 반드시 로깅한다.
 - 기대 가능한 단건 스킵(예: 이미지 한 장 HTTP 실패 후 `continue`)은 과도하지 않게 info/debug로 남기고, 외부 서비스(AI/임베딩/크롤링) 호출 실패처럼 진단이 필요한 실패는 warning 이상으로 남긴다.
 - **사용자 응답이 있는 API는 실패를 500이 아닌 의미 있는 상태코드로 돌려준다.** 폴백으로 빈 결과를 주면 "실패"가 "결과 없음"으로 오인되는 경우(예: 외부 의존 서비스 일시 장애)에는 도메인 예외를 던져 적절한 4xx/5xx로 매핑한다(예: 외부 서비스 장애 → 503). 서비스는 `HTTPException`을 만들지 않고 도메인 예외를 던지며, 상태 매핑은 `_DOMAIN_EXCEPTION_STATUS`에 등록한다.
 - **500은 코딩된(예상 가능한) 실패에 쓰지 않는다.** 우리가 인지하는 실패 조건은 전부 도메인 예외 → 4xx/5xx로 매핑하고, 500은 *예기치 못한* 예외에만 남긴다. `app/main.py`의 catch-all 핸들러(`handle_unexpected_error`)가 매핑되지 않은 예외를 `logger.exception`(트레이스백 포함)으로 남기고 일반화된 500 JSON으로 응답한다 — 내부 예외 메시지는 사용자에게 노출하지 않는다. 새로 알게 된 실패 조건은 catch-all 500에 방치하지 말고 도메인 예외로 승격한다.

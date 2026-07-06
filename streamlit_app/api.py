@@ -2,6 +2,7 @@ import time
 
 import httpx
 
+from app.schemas.analyses import AnalysisAccepted, AnalysisListItem, AnalysisStatus, InterviewPreparationResult
 from app.schemas.documents import ParseJobAccepted, ParseJobStatus
 from app.schemas.profiles import JobPostingListItem, ResumeListItem
 from streamlit_app.settings import f_settings
@@ -181,6 +182,141 @@ def fetch_parse_result(document_id: int) -> dict | None:
         if job.status == "failed":
             raise RuntimeError(job.error or "문서 분석에 실패했습니다")
         time.sleep(f_settings.PARSE_POLL_INTERVAL_SECONDS)
+
+
+def create_analysis(resume_document_id: int, job_posting_document_id: int) -> int:
+    """이력서×채용공고 적합도 분석 작업을 등록한다.
+
+    Args:
+        resume_document_id: 분석할 이력서 문서 ID.
+        job_posting_document_id: 분석할 채용공고 문서 ID.
+
+    Returns:
+        등록된 분석 ID.
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우(파싱 미완료 409 등).
+    """
+    response = httpx.post(
+        f"{f_settings.API_BASE_URL}/analyses",
+        json={
+            "resume_document_id": resume_document_id,
+            "job_posting_document_id": job_posting_document_id,
+        },
+        headers=auth_headers(),
+        timeout=30,
+    )
+    if not response.is_success:
+        raise RuntimeError(response_error_message(response))
+    return AnalysisAccepted.model_validate_json(response.content).analysis_id
+
+
+def fetch_analysis_result(analysis_id: int) -> dict:
+    """적합도 분석이 끝날 때까지 상태를 폴링해 결과를 가져온다.
+
+    Args:
+        analysis_id: 상태를 폴링할 분석 ID.
+
+    Returns:
+        분석 완료 시 FitAnalysisResult dict.
+
+    Raises:
+        RuntimeError: 분석이 실패 상태로 끝났거나 완료 응답에 결과가 없는 경우.
+    """
+    while True:
+        analysis = fetch_analysis(analysis_id)
+        if analysis.status == "done":
+            if analysis.result is None:
+                raise RuntimeError("분석 결과가 비어 있습니다")
+            return analysis.result.model_dump(mode="json")
+        if analysis.status == "failed":
+            raise RuntimeError(analysis.error or "적합도 분석에 실패했습니다")
+        time.sleep(f_settings.PARSE_POLL_INTERVAL_SECONDS)
+
+
+def fetch_analyses(limit: int = 50) -> list[AnalysisListItem]:
+    """현재 사용자의 적합도 분석 이력 목록을 조회한다.
+
+    Args:
+        limit: 최대 결과 수.
+
+    Returns:
+        분석 이력 목록(최신순).
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    response = httpx.get(
+        f"{f_settings.API_BASE_URL}/analyses",
+        params={"limit": limit},
+        headers=auth_headers(),
+        timeout=30,
+    )
+    if not response.is_success:
+        raise RuntimeError(response_error_message(response))
+    return [AnalysisListItem.model_validate(item) for item in response.json()]
+
+
+def delete_analysis(analysis_id: int) -> None:
+    """적합도 분석 이력 한 건을 삭제한다(soft delete).
+
+    Args:
+        analysis_id: 삭제할 분석 ID.
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    response = httpx.delete(
+        f"{f_settings.API_BASE_URL}/analyses/{analysis_id}",
+        headers=auth_headers(),
+        timeout=30,
+    )
+    if not response.is_success:
+        raise RuntimeError(response_error_message(response))
+
+
+def fetch_analysis(analysis_id: int) -> AnalysisStatus:
+    """적합도 분석 한 건의 현재 상태·결과를 조회한다(폴링 없음).
+
+    Args:
+        analysis_id: 조회할 분석 ID.
+
+    Returns:
+        분석 상태(완료면 결과 포함).
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    response = httpx.get(
+        f"{f_settings.API_BASE_URL}/analyses/{analysis_id}",
+        headers=auth_headers(),
+        timeout=30,
+    )
+    if not response.is_success:
+        raise RuntimeError(response_error_message(response))
+    return AnalysisStatus.model_validate_json(response.content)
+
+
+def create_interview_preparation(analysis_id: int) -> InterviewPreparationResult:
+    """완료된 적합도 분석을 기준으로 면접 질문/답변 예시를 생성한다.
+
+    Args:
+        analysis_id: 면접 준비를 생성할 분석 ID.
+
+    Returns:
+        생성되었거나 캐시된 면접 준비 결과.
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    response = httpx.post(
+        f"{f_settings.API_BASE_URL}/analyses/{analysis_id}/interview-prep",
+        headers=auth_headers(),
+        timeout=60,
+    )
+    if not response.is_success:
+        raise RuntimeError(response_error_message(response))
+    return InterviewPreparationResult.model_validate_json(response.content)
 
 
 def fetch_job_postings(params: dict) -> list[JobPostingListItem]:
