@@ -8,11 +8,14 @@ from app.crawlers.wanted import WantedJobPostingCrawler
 from app.database.session import Database
 from app.repositories.analyses import AnalysesRepository
 from app.repositories.documents import DocumentsRepository
+from app.repositories.preferences import PreferencesRepository
 from app.repositories.profiles import ProfilesRepository
+from app.repositories.user_profiles import UserProfilesRepository
 from app.repositories.users import UsersRepository
 from app.services.analysis import AnalysisService
 from app.services.auth import AuthService
 from app.services.document import DocumentService
+from app.services.preferences import PreferencesService
 
 
 class Container(containers.DeclarativeContainer):
@@ -44,6 +47,16 @@ class Container(containers.DeclarativeContainer):
         session_factory=database.provided.async_session,
     )
 
+    preferences_repository = providers.Factory(
+        PreferencesRepository,
+        session_factory=database.provided.async_session,
+    )
+
+    user_profiles_repository = providers.Factory(
+        UserProfilesRepository,
+        session_factory=database.provided.async_session,
+    )
+
     wanted_job_posting_crawler = providers.Factory(WantedJobPostingCrawler)
     saramin_job_posting_crawler = providers.Factory(SaraminJobPostingCrawler)
     job_posting_crawler = providers.Factory(
@@ -67,6 +80,14 @@ class Container(containers.DeclarativeContainer):
         AnalysisService,
         analyses_repository=analyses_repository,
         profiles_repository=profiles_repository,
+        preferences_repository=preferences_repository,
+        user_profiles_repository=user_profiles_repository,
+    )
+
+    preferences_service = providers.Factory(
+        PreferencesService,
+        preferences_repository=preferences_repository,
+        user_profiles_repository=user_profiles_repository,
     )
 
     auth_service = providers.Factory(

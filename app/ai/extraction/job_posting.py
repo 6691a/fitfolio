@@ -43,7 +43,13 @@ async def extract_job_posting_structured(text: str, fallback: JobPostingExtractD
             "공고 언어·사이트·주소·명시된 시간대·통화·국가 단서를 보고 timezone 필드에 "
             "IANA timezone 이름을 추론해 작성하라(예: 한국어/사람인/서울 주소는 Asia/Seoul). "
             "명시적 UTC offset이 있는 ISO 문자열이면 그대로 작성하고 timezone도 가능한 범위에서 채워라. "
-            "상시채용/채용시 마감/수시채용이면 end_date='상시채용'으로 작성하라."
+            "상시채용/채용시 마감/수시채용이면 end_date='상시채용'으로 작성하라. "
+            "domain에는 이 공고의 직군을 정규화한 한 단어(예: 백엔드/프론트엔드/데이터/머신러닝/인프라/DevOps)로 작성하고, "
+            "tech_tags에는 요구 기술 스택을 공식 표기로 정규화해 채워라(관심 직군·기술 집계용). 판단 불가면 비워라. "
+            "한 공고에 모집부문(직무)이 여러 개면 positions 배열에 각 포지션을 분리해 담아라. 각 포지션의 "
+            "업무·자격·기술을 다른 포지션 것과 섞지 말고, 포지션별 domain/tech_tags/responsibilities/qualifications/"
+            "preferred_qualifications/career_requirement/education_requirement을 그 포지션 기준으로만 채워라. "
+            "모집부문이 하나면 positions에 원소 1개만 넣어라."
         ),
         clean_text,
         fallback_payload,

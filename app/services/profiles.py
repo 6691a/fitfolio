@@ -112,6 +112,8 @@ def build_profile_data(document_type: DocumentKind, parsed: ParsedDocument) -> P
             employment_type=_structured_enum(structured, "employment_type", EmploymentType),
             career_requirement=_structured_value(structured, "career_requirement"),
             education_requirement=_structured_value(structured, "education_requirement"),
+            domain=_structured_value(structured, "domain"),
+            tech_tags=_structured_list(structured, "tech_tags"),
             start_date=_structured_datetime_utc(
                 structured,
                 "start_date",
@@ -127,6 +129,7 @@ def build_profile_data(document_type: DocumentKind, parsed: ParsedDocument) -> P
             qualifications=_structured_list(structured, "qualifications"),
             preferred_qualifications=_structured_list(structured, "preferred_qualifications"),
             benefits=_structured_list(structured, "benefits"),
+            positions=_structured_list(structured, "positions"),
             source_url=parsed.metadata.get("source_url"),
             raw_sections=raw_sections,
         )

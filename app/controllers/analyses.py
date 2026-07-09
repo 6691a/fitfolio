@@ -6,6 +6,7 @@ from app.controllers.auth import get_current_user
 from app.schemas.analyses import (
     AnalysisAccepted,
     AnalysisCreateRequest,
+    AnalysisFeedbackRequest,
     AnalysisListItem,
     AnalysisStatus,
     InterviewPreparationResult,
@@ -110,6 +111,35 @@ async def prepare_interview(
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "분석을 찾을 수 없습니다")
     return result
+
+
+@router.post("/{analysis_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
+@inject
+async def submit_feedback(
+    analysis_id: int,
+    payload: AnalysisFeedbackRequest,
+    current_user: PublicUser = Depends(get_current_user),
+    analysis: AnalysisService = Depends(Provide[Container.analysis_service]),
+):
+    """완료된 적합도 분석에 별점·메모 피드백을 남긴다(다음 답변 개인화에 반영).
+
+    Args:
+        analysis_id: 피드백을 남길 분석 ID.
+        payload: 별점(0.5~5.0)과 자유 메모.
+        current_user: 인증된 현재 사용자(소유권 검증).
+        analysis: 컨테이너가 주입하는 AnalysisService.
+
+    Raises:
+        HTTPException: 해당 분석을 찾을 수 없을 때(404).
+    """
+    saved = await analysis.submit_feedback(
+        analysis_id=analysis_id,
+        user_id=current_user.id,
+        rating=payload.rating,
+        note=payload.note,
+    )
+    if not saved:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "분석을 찾을 수 없습니다")
 
 
 @router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)

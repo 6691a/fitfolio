@@ -41,6 +41,8 @@ class AnalysisGraphState(TypedDict, total=False):
     job_posting_profile: Any
     resume_input: dict
     job_posting_input: dict
+    matched_position: str | None
+    user_context: str
     result: FitAnalysisResult
     analysis_result: FitAnalysisResult
     interview_preparation: InterviewPreparationResult

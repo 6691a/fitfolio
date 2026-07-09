@@ -11,6 +11,7 @@ from streamlit_app.views import (
     render_job_posting_detail,
     render_job_posting_list,
     render_login_page,
+    render_preferences_page,
     render_resume_detail,
     render_resume_list,
     render_signup_page,
@@ -54,11 +55,12 @@ def render_authenticated_header() -> None:
 
 def render_authenticated_navigation() -> None:
     """인증 후 주요 화면으로 이동하는 버튼들을 항상 같은 위치에 렌더링한다."""
-    analyze_col, history_col, search_col, resumes_col = st.columns(4)
+    analyze_col, history_col, search_col, resumes_col, prefs_col = st.columns(5)
     analyze_col.page_link(analyze_page, label="분석하기", width="stretch")
     history_col.page_link(history_page, label="분석 이력", width="stretch")
     search_col.page_link(search_page, label="공고 검색", width="stretch")
     resumes_col.page_link(resumes_page, label="내 이력서 관리", width="stretch")
+    prefs_col.page_link(preferences_page, label="관심 설정", width="stretch")
     st.divider()
 
 
@@ -134,6 +136,12 @@ def render_analysis_detail_route() -> None:
         st.switch_page(history_page)
 
 
+def render_preferences_route() -> None:
+    """관심 설정 URL 페이지를 렌더링한다."""
+    _authenticated_frame()
+    render_preferences_page()
+
+
 def render_resumes_route() -> None:
     """내 이력서 목록 URL 페이지. 행 선택 시 이력서 상세 페이지로 이동한다."""
     _authenticated_frame()
@@ -154,8 +162,7 @@ def render_resume_detail_route() -> None:
         st.switch_page(resumes_page)
 
 
-authenticated = is_authenticated()
-# ponytail: 기본(default) 페이지는 url_path 라우트가 없으므로, 루트는 리다이렉트 전용으로 두고
+# 기본(default) 페이지는 url_path 라우트가 없으므로, 루트는 리다이렉트 전용으로 두고
 # 실제 페이지는 모두 non-default로 만들어 각자의 URL(/login·/analyze·/search)을 갖게 한다.
 home_page = st.Page(render_home_route, title="홈", default=True, visibility="hidden")
 # 인증 페이지는 상단 nav에 노출하지 않는다(폼 하단 링크로만 이동). 라우트는 유지된다.
@@ -203,6 +210,12 @@ resume_detail_page = st.Page(
     url_path="resume",
     visibility="hidden",
 )
+preferences_page = st.Page(
+    render_preferences_route,
+    title="관심 설정",
+    url_path="preferences",
+    visibility="hidden",
+)
 page = st.navigation(
     [
         home_page,
@@ -215,6 +228,7 @@ page = st.navigation(
         job_detail_page,
         resumes_page,
         resume_detail_page,
+        preferences_page,
     ],
     position="top",
 )

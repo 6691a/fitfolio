@@ -61,12 +61,15 @@ def render_analyze_page() -> None:
 
     ready = bool(job_posting_url) if job_posting_format == DocumentFormat.URL else job_posting_file is not None
     is_requesting = bool(st.session_state.get("is_requesting", False))
+    is_analyzing = bool(st.session_state.get("is_analyzing", False))
 
     button_slot = st.empty()
 
-    button_label = "분석 중..." if is_requesting else "분석 시작"
-    if button_slot.button(button_label, type="primary", disabled=not ready or is_requesting):
+    is_busy = is_requesting or is_analyzing
+    button_label = "분석 중..." if is_busy else "분석 시작"
+    if button_slot.button(button_label, type="primary", disabled=not ready or is_busy):
         st.session_state["is_requesting"] = True
+        st.session_state["is_analyzing"] = False
         st.session_state.pop("analysis_ids", None)
         st.session_state.pop("analysis_error", None)
         st.rerun()
@@ -92,6 +95,7 @@ def render_analyze_page() -> None:
                 "resume": resume_document_id,
                 "job_posting": job_posting_document_id,
             }
+            st.session_state["is_analyzing"] = True
         except Exception as exc:
             st.session_state["analysis_error"] = str(exc)
         finally:
@@ -102,4 +106,8 @@ def render_analyze_page() -> None:
         st.error(analysis_error)
 
     if analysis_ids := st.session_state.get("analysis_ids"):
-        render_analysis_result(analysis_ids["resume"], analysis_ids["job_posting"])
+        analysis_rendered = render_analysis_result(analysis_ids["resume"], analysis_ids["job_posting"])
+        if st.session_state.get("is_analyzing"):
+            st.session_state["is_analyzing"] = False
+            if analysis_rendered:
+                st.rerun()

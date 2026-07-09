@@ -107,6 +107,36 @@ def _render_sections(sections: list[tuple[str, list]]) -> None:
             st.markdown("\n".join(f"- {entry}" for entry in entries))
 
 
+def _render_positions(positions: list[dict]) -> None:
+    """여러 모집부문(포지션)을 각각 카드로 분리해 렌더링한다.
+
+    한 공고 안에 직무가 여럿이면 업무·자격·우대를 union으로 뭉치지 않고 포지션별로 나눠 보여준다.
+
+    Args:
+        positions: 채용공고 프로필의 포지션 dict 목록.
+    """
+    st.caption(
+        f"이 공고에는 모집부문이 {len(positions)}개 있습니다. "
+        "적합도 분석은 선택한 이력서에 가장 맞는 포지션을 자동으로 골라 채점합니다."
+    )
+    for index, position in enumerate(positions, start=1):
+        with st.container(border=True):
+            st.markdown(f"##### 📌 {position.get('title') or f'포지션 {index}'}")
+            chips = [f":blue-badge[{position['domain']}]"] if position.get("domain") else []
+            chips += [f":gray-badge[{tag}]" for tag in (position.get("tech_tags") or [])]
+            if chips:
+                st.markdown(" ".join(chips))
+            for label, key in (
+                ("💼 주요 업무", "responsibilities"),
+                ("✅ 자격 요건", "qualifications"),
+                ("⭐ 우대 사항", "preferred_qualifications"),
+            ):
+                entries = position.get(key) or []
+                if entries:
+                    st.markdown(f"**{label}**")
+                    st.markdown("\n".join(f"- {entry}" for entry in entries))
+
+
 def render_job_posting_detail(item: JobPostingListItem) -> bool:
     """선택한 채용공고 상세를 렌더링한다.
 
@@ -138,14 +168,20 @@ def render_job_posting_detail(item: JobPostingListItem) -> bool:
     except Exception as exc:
         st.error(str(exc))
         job = {}
-    _render_sections(
-        [
-            ("💼 주요 업무", job.get("responsibilities", [])),
-            ("✅ 자격 요건", job.get("qualifications", [])),
-            ("⭐ 우대 사항", job.get("preferred_qualifications", [])),
-            ("🎁 복지/혜택", job.get("benefits", [])),
-        ]
-    )
+    positions = job.get("positions") or []
+    if len(positions) >= 2:
+        _render_positions(positions)
+        # 복지/혜택은 공고 전체 공통이라 포지션 밖에서 한 번만 보여준다.
+        _render_sections([("🎁 복지/혜택", job.get("benefits", []))])
+    else:
+        _render_sections(
+            [
+                ("💼 주요 업무", job.get("responsibilities", [])),
+                ("✅ 자격 요건", job.get("qualifications", [])),
+                ("⭐ 우대 사항", job.get("preferred_qualifications", [])),
+                ("🎁 복지/혜택", job.get("benefits", [])),
+            ]
+        )
 
     st.divider()
     _render_analyze_action(item.document_id)

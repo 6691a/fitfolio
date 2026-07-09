@@ -36,12 +36,15 @@ class JobPostingProfileData(BaseModel):
     employment_type: EmploymentType | None = None
     career_requirement: str | None = None
     education_requirement: str | None = None
+    domain: str | None = None
+    tech_tags: list[str] = Field(default_factory=list)
     start_date: datetime | None = None
     end_date: datetime | None = None
     responsibilities: list[str] = Field(default_factory=list)
     qualifications: list[str] = Field(default_factory=list)
     preferred_qualifications: list[str] = Field(default_factory=list)
     benefits: list[str] = Field(default_factory=list)
+    positions: list[dict] = Field(default_factory=list)
     source_url: str | None = None
     raw_sections: dict = Field(default_factory=dict)
 

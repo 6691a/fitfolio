@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import BaseModel, enum_column
@@ -157,6 +157,16 @@ class JobPostingProfile(BaseModel):
         nullable=True,
         comment="학력 요건. 예: 학력 무관, 대졸 이상.",
     )
+    domain: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="정규화된 직군 태그(단일 값). 관심 직군 집계용. 예: 백엔드, 데이터, 프론트엔드.",
+    )
+    tech_tags: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="정규화된 핵심 기술 태그 목록. 관심 기술 집계용. 예: Python, AWS, Django.",
+    )
     start_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -182,6 +192,11 @@ class JobPostingProfile(BaseModel):
         default=list,
         comment="우대 사항 목록. 있으면 좋은 경험/기술/조건.",
     )
+    positions: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="공고 안의 모집부문(포지션) 목록. 여러 직무를 하나로 올린 공고를 분리 보존한다. 적합도 분석은 이력서에 가장 맞는 포지션을 자동 선택한다.",
+    )
     benefits: Mapped[list] = mapped_column(
         JSON,
         default=list,
@@ -201,4 +216,41 @@ class JobPostingProfile(BaseModel):
         Text,
         nullable=True,
         comment="FTS(전문검색)용 합성 검색 텍스트. build_job_posting_search_text 결과.",
+    )
+
+
+class UserProfile(BaseModel):
+    """분석 이력에서 집계한 사용자 요약 프로필(사용자당 1행).
+
+    원천이 아니라 재생성 가능한 물질화 뷰(캐시)다. 분석 완료 시마다 최근 분석 전체에서
+    재계산해 upsert하며(멱등), 다음 분석의 개인화와 관심 설정 프리필의 자동 제안값으로 쓴다.
+    """
+
+    __tablename__ = "user_profiles"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        comment="프로필 소유자(users.id). 사용자당 1행만 가진다.",
+    )
+    interest_domains: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="관심 직군 태그(최근성 가중 상위). 분석한 공고 domain 집계.",
+    )
+    interest_tech: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="관심 기술 태그(최근성 가중 상위). 분석한 공고 tech_tags 집계.",
+    )
+    own_skills: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        comment="사용자 보유 기술(이력서 skills 집계).",
+    )
+    experience_months: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="총 경력 개월 수(가장 최근 이력서 기준). 파싱 불가면 NULL.",
     )

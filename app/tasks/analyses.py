@@ -7,7 +7,9 @@ from app.celery_app import celery_app
 from app.config.containers import Container
 from app.database.session import Database
 from app.repositories.analyses import AnalysesRepository
+from app.repositories.preferences import PreferencesRepository
 from app.repositories.profiles import ProfilesRepository
+from app.repositories.user_profiles import UserProfilesRepository
 from app.services.analysis import AnalysisService
 
 
@@ -39,5 +41,7 @@ async def _analyze_fit(
         analysis_service = build_analysis_service(
             analyses_repository=AnalysesRepository(session_factory=database.async_session),
             profiles_repository=ProfilesRepository(session_factory=database.async_session),
+            preferences_repository=PreferencesRepository(session_factory=database.async_session),
+            user_profiles_repository=UserProfilesRepository(session_factory=database.async_session),
         )
         await analysis_service.run(analysis_id)

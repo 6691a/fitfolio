@@ -84,8 +84,33 @@ class FakeProfilesRepository:
         return self.job_postings.get(document_id)
 
 
-def _service(analyses, profiles) -> AnalysisService:
-    return AnalysisService(analyses, profiles)  # type: ignore[arg-type]
+class FakePreferencesRepository:
+    def __init__(self, preferences: dict | None = None) -> None:
+        self.preferences = preferences or {}
+
+    async def get_by_user(self, user_id: int):
+        return self.preferences.get(user_id)
+
+
+class FakeUserProfilesRepository:
+    def __init__(self) -> None:
+        self.profiles: dict[int, SimpleNamespace] = {}
+
+    async def get_by_user(self, user_id: int):
+        return self.profiles.get(user_id)
+
+    async def upsert(self, user_id: int, **values):
+        self.profiles[user_id] = SimpleNamespace(user_id=user_id, **values)
+        return self.profiles[user_id]
+
+
+def _service(analyses, profiles, preferences=None, user_profiles=None) -> AnalysisService:
+    return AnalysisService(
+        analyses,  # type: ignore[arg-type]
+        profiles,  # type: ignore[arg-type]
+        preferences or FakePreferencesRepository(),  # type: ignore[arg-type]
+        user_profiles or FakeUserProfilesRepository(),  # type: ignore[arg-type]
+    )
 
 
 class FakeAnalysesRepository:
@@ -145,6 +170,23 @@ class FakeAnalysesRepository:
             if record.user_id == user_id and record.deleted_at is None
         ][:limit]
 
+    async def save_feedback(self, analysis_id: int, *, user_id: int, feedback: dict) -> bool:
+        record = self.records.get(analysis_id)
+        if record is None or record.user_id != user_id or record.status != ParseStatus.DONE:
+            return False
+        record.feedback = feedback
+        return True
+
+    async def list_recent_feedback(self, user_id: int, *, limit: int = 5) -> list[dict]:
+        return [
+            record.feedback
+            for record in reversed(self.records.values())
+            if record.user_id == user_id and getattr(record, "feedback", None)
+        ][:limit]
+
+    async def list_recent_analyzed_profiles(self, user_id: int, *, limit: int = 30):
+        return []
+
 
 @pytest.mark.asyncio
 async def test_request_analysis_creates_pending_and_enqueues_task(monkeypatch):
@@ -194,7 +236,7 @@ async def test_run_saves_result_on_success(monkeypatch):
     profiles = FakeProfilesRepository(resumes={11: _resume_profile()}, job_postings={22: _job_posting_profile()})
     await analyses.create(user_id=1, resume_document_id=11, job_posting_document_id=22)
 
-    async def fake_analyze_fit(resume, job_posting):
+    async def fake_analyze_fit(resume, job_posting, *, user_context=""):
         assert resume["skills"] == ["Python", "FastAPI"]
         assert job_posting["qualifications"] == ["Python"]
         return _fit_result()
@@ -214,7 +256,7 @@ async def test_run_marks_failed_when_llm_raises(monkeypatch):
     profiles = FakeProfilesRepository(resumes={11: _resume_profile()}, job_postings={22: _job_posting_profile()})
     await analyses.create(user_id=1, resume_document_id=11, job_posting_document_id=22)
 
-    async def fake_analyze_fit(resume, job_posting):
+    async def fake_analyze_fit(resume, job_posting, *, user_context=""):
         raise StructuredExtractionError("boom")
 
     monkeypatch.setattr("app.ai.graph.analysis.analyze_fit", fake_analyze_fit)
@@ -234,6 +276,40 @@ async def test_run_marks_failed_when_profile_deleted():
     await _service(analyses, FakeProfilesRepository()).run(1)
 
     assert analyses.records[1].status == ParseStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_profile_upserts_from_recent_analyses():
+    analyses = FakeAnalysesRepository()
+
+    async def list_recent(user_id, *, limit=30):
+        assert user_id == 1
+        return [
+            (SimpleNamespace(domain="백엔드", tech_tags=["Python"], title=None), _resume_profile()),
+        ]
+
+    analyses.list_recent_analyzed_profiles = list_recent  # type: ignore[method-assign]
+    user_profiles = FakeUserProfilesRepository()
+
+    await _service(analyses, FakeProfilesRepository(), user_profiles=user_profiles).refresh_user_profile(1)
+
+    stored = user_profiles.profiles[1]
+    assert stored.interest_domains == ["백엔드"]
+    assert stored.interest_tech == ["Python"]
+    assert stored.own_skills == ["Python", "FastAPI"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_profile_is_fail_soft_on_error():
+    analyses = FakeAnalysesRepository()
+
+    async def boom(user_id, *, limit=30):
+        raise RuntimeError("db down")
+
+    analyses.list_recent_analyzed_profiles = boom  # type: ignore[method-assign]
+
+    # 예외를 삼키지 않고 로깅하되, 호출자에게 전파하지 않는다(분석 완료 유지).
+    await _service(analyses, FakeProfilesRepository()).refresh_user_profile(1)
 
 
 @pytest.mark.asyncio

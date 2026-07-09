@@ -5,6 +5,7 @@ from streamlit_app.views.history import (
     render_analysis_detail,
     render_analysis_history_list,
 )
+from streamlit_app.views.preferences import render_preferences_page
 from streamlit_app.views.resumes import (
     SELECTED_RESUME_KEY,
     render_resume_detail,
@@ -26,6 +27,7 @@ __all__ = [
     "render_job_posting_detail",
     "render_job_posting_list",
     "render_login_page",
+    "render_preferences_page",
     "render_resume_detail",
     "render_resume_list",
     "render_signup_page",

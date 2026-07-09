@@ -60,6 +60,8 @@ class FakeAnalysesRepository:
         self.started: list[int] = []
         self.done: list[tuple[int, dict]] = []
         self.failed: list[tuple[int, str]] = []
+        self.feedback: list[dict] = []
+        self.recent_profiles: list[tuple[object, object]] = []
 
     async def get(self, analysis_id: int):
         assert analysis_id == 3
@@ -82,6 +84,34 @@ class FakeAnalysesRepository:
         self.failed.append((analysis_id, error))
         self.record.status = ParseStatus.FAILED
         self.record.error = error
+
+    async def list_recent_feedback(self, user_id: int, *, limit: int = 5) -> list[dict]:
+        return list(self.feedback)
+
+    async def list_recent_analyzed_profiles(self, user_id: int, *, limit: int = 30):
+        return list(self.recent_profiles)
+
+
+class FakePreferencesRepository:
+    def __init__(self, preference=None) -> None:
+        self.preference = preference
+
+    async def get_by_user(self, user_id: int):
+        return self.preference
+
+
+class FakeUserProfilesRepository:
+    def __init__(self, profile=None) -> None:
+        self.profile = profile
+        self.upserts: list[tuple[int, dict]] = []
+
+    async def get_by_user(self, user_id: int):
+        return self.profile
+
+    async def upsert(self, user_id: int, **values):
+        self.upserts.append((user_id, values))
+        self.profile = SimpleNamespace(**values)
+        return self.profile
 
 
 class FakeProfilesRepository:
@@ -116,15 +146,18 @@ class FakeAnalysisService:
     def __init__(self) -> None:
         self._analyses = FakeAnalysesRepository()
         self._profiles = FakeProfilesRepository()
+        self._preferences = FakePreferencesRepository()
+        self._user_profiles = FakeUserProfilesRepository()
 
 
 @pytest.mark.asyncio
 async def test_analysis_graph_runs_profile_lookup_evaluation_and_persist_skills(monkeypatch):
     service = FakeAnalysisService()
 
-    async def fake_analyze_fit(resume, job_posting):
+    async def fake_analyze_fit(resume, job_posting, *, user_context=""):
         assert resume["skills"] == ["Python"]
         assert job_posting["qualifications"] == ["Python"]
+        assert user_context == ""  # 프로필·피드백이 없으면 개인화 블록을 주입하지 않는다.
         return _fit_result()
 
     monkeypatch.setattr("app.ai.graph.analysis.analyze_fit", fake_analyze_fit)
@@ -144,7 +177,7 @@ async def test_interview_preparation_graph_generates_and_persists_questions(monk
     service._analyses.record.status = ParseStatus.DONE
     service._analyses.record.result = _fit_result().model_dump(mode="json")
 
-    async def fake_generate(*, resume, job_posting, analysis_result):
+    async def fake_generate(*, resume, job_posting, analysis_result, user_context=""):
         assert resume["skills"] == ["Python"]
         assert job_posting["qualifications"] == ["Python"]
         assert analysis_result.overall_score == 82
@@ -157,6 +190,48 @@ async def test_interview_preparation_graph_generates_and_persists_questions(monk
     assert state["interview_preparation"] == _interview_result()
     assert service._analyses.record.interview_preparation == _interview_result().model_dump(mode="json")
     assert state["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_analysis_graph_injects_stored_interests_and_feedback(monkeypatch):
+    service = FakeAnalysisService()
+    service._preferences.preference = SimpleNamespace(
+        interest_jobs="백엔드 개발자", interest_skills="Python", notes=None
+    )
+    service._analyses.feedback = [{"rating": 4.5, "note": "강점을 더 구체적으로"}]
+
+    captured = {}
+
+    async def fake_analyze_fit(resume, job_posting, *, user_context=""):
+        captured["user_context"] = user_context
+        return _fit_result()
+
+    monkeypatch.setattr("app.ai.graph.analysis.analyze_fit", fake_analyze_fit)
+
+    await run_analysis_graph(service, analysis_id=3)
+
+    assert "관심 직무: 백엔드 개발자" in captured["user_context"]
+    assert "별점 4.5/5: 강점을 더 구체적으로" in captured["user_context"]
+
+
+@pytest.mark.asyncio
+async def test_analysis_graph_injects_materialized_profile_when_prefs_unset(monkeypatch):
+    service = FakeAnalysisService()
+    # 저장값(UserPreferences)은 없고, 물질화된 집계 프로필을 읽어 주입한다.
+    service._user_profiles.profile = SimpleNamespace(interest_domains=["데이터 엔지니어"], interest_tech=["SQL"])
+
+    captured = {}
+
+    async def fake_analyze_fit(resume, job_posting, *, user_context=""):
+        captured["user_context"] = user_context
+        return _fit_result()
+
+    monkeypatch.setattr("app.ai.graph.analysis.analyze_fit", fake_analyze_fit)
+
+    await run_analysis_graph(service, analysis_id=3)
+
+    assert "관심 직무: 데이터 엔지니어" in captured["user_context"]
+    assert "관심 기술: SQL" in captured["user_context"]
 
 
 def test_analysis_graph_unknown_skill_routes_to_finish():

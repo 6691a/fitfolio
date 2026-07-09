@@ -13,6 +13,7 @@ from app.config.settings import settings
 from app.controllers import analyses
 from app.controllers import auth
 from app.controllers import documents
+from app.controllers import preferences
 from app.services.errors import (
     AuthConflictError,
     AnalysisNotReadyError,
@@ -110,7 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 container = Container()
-container.wire(modules=[analyses, auth, documents, classifier_langchain, extraction_langchain, vision])
+container.wire(modules=[analyses, auth, documents, preferences, classifier_langchain, extraction_langchain, vision])
 
 app = FastAPI(title="Fitfolio", lifespan=lifespan)
 # pyrefly: ignore [missing-attribute]
@@ -119,3 +120,4 @@ _register_exception_handlers(app)
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(analyses.router)
+app.include_router(preferences.router)

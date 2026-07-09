@@ -126,6 +126,19 @@ class JobPostingImage(BaseModel):
     text: str | None = None
 
 
+class JobPosition(BaseModel):
+    """한 채용공고 안의 개별 모집부문(포지션). 여러 직무를 하나로 올린 공고를 분리 보존한다."""
+
+    title: str | None = Field(default=None, description="이 포지션의 직무명. 예: 백엔드 개발자, HR 담당자.")
+    domain: str | None = Field(default=None, description="정규화된 직군 한 개. 예: 백엔드, 데이터, 인사.")
+    tech_tags: list[str] = Field(default_factory=list, description="이 포지션의 정규화 기술 스택 토큰.")
+    career_requirement: str | None = Field(default=None, description="이 포지션의 경력 요건.")
+    education_requirement: str | None = Field(default=None, description="이 포지션의 학력 요건.")
+    responsibilities: list[str] = Field(default_factory=list, description="이 포지션의 주요 업무.")
+    qualifications: list[str] = Field(default_factory=list, description="이 포지션의 자격 요건.")
+    preferred_qualifications: list[str] = Field(default_factory=list, description="이 포지션의 우대 사항.")
+
+
 class JobPostingExtractDebug(BaseModel):
     source: str
     relevant: bool = True
@@ -140,6 +153,18 @@ class JobPostingExtractDebug(BaseModel):
     employment_type: EmploymentType | None = Field(default=None, description="채용 형태. 모르면 기타")
     career_requirement: str | None = Field(default=None, description="경력 요건. 예: 3년 이상, 신입, 경력 무관")
     education_requirement: str | None = Field(default=None, description="학력 요건. 예: 학력 무관, 대졸 이상")
+    domain: str | None = Field(
+        default=None,
+        description=(
+            "정규화된 직군 한 개. 표기가 달라도 같은 직군은 같은 값으로 통일한다. "
+            "예: 백엔드, 프론트엔드, 풀스택, 데이터, 머신러닝, 인프라/DevOps, 모바일, 보안, 기획, 디자인. "
+            "판단 불가면 비운다."
+        ),
+    )
+    tech_tags: list[str] = Field(
+        default_factory=list,
+        description="정규화된 핵심 기술 스택 토큰. 예: Python, AWS, Django, Kubernetes. 표기는 공식 명칭으로 통일한다.",
+    )
     application_start_date: str | None = None
     application_end_date: str | None = None
     start_date: str | None = Field(
@@ -162,6 +187,14 @@ class JobPostingExtractDebug(BaseModel):
     qualifications: list[str] = Field(default_factory=list, description="자격 요건")
     preferred_qualifications: list[str] = Field(default_factory=list, description="우대 사항")
     benefits: list[str] = Field(default_factory=list, description="혜택 및 복지")
+    positions: list[JobPosition] = Field(
+        default_factory=list,
+        description=(
+            "한 공고 안에 모집부문(직무)이 여러 개면 각 포지션을 분리해 채운다. 각 포지션의 업무·자격·기술을 "
+            "다른 포지션과 섞지 말고 해당 포지션 것만 담는다. 모집부문이 하나면 원소 1개, 판단 불가면 비운다. "
+            "상위 responsibilities/qualifications 등은 공고 전체 요약으로 유지한다."
+        ),
+    )
     image_urls: list[JobPostingImage] = Field(default_factory=list)
     html: str | None = None
     raw: dict | None = None

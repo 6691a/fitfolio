@@ -29,6 +29,7 @@ ENTRY_LABELS = {
 TITLE_KEYS = ("company", "organization", "school", "project", "name", "title")
 SUBTITLE_KEYS = ("role", "position", "degree", "major")
 DATE_KEYS = ("period", "date", "duration")
+HIDDEN_ENTRY_KEYS = {"employment_type"}
 
 # 상세 페이지로 넘길 선택 이력서 문서 ID를 담아두는 세션 키(라우팅은 main.py가 담당).
 SELECTED_RESUME_KEY = "resumes_selected_document_id"
@@ -135,6 +136,7 @@ def _format_resume_entry(entry: dict | str, *, fallback_title: str) -> tuple[str
     if date_value:
         lines.append(f"기간: {date_value}")
         used_keys.update(DATE_KEYS)
+    used_keys.update(HIDDEN_ENTRY_KEYS)
 
     for key, value in entry.items():
         if key in used_keys:

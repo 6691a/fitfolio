@@ -4,8 +4,9 @@ from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 
-from app.ai.analysis import analyze_fit, job_posting_fit_input, resume_fit_input
+from app.ai.analysis import analyze_fit, job_posting_fit_input, resume_fit_input, select_best_position
 from app.ai.interview import generate_interview_preparation
+from app.ai.memory import build_user_context
 from app.schemas.analyses import FitAnalysisResult
 from app.schemas.documents import ParseStatus
 from app.ai.graph.state import AnalysisGraphState, AnalysisNextSkill
@@ -19,6 +20,30 @@ _INTERVIEW_PREPARATION_SKILLS = {
     "persist_interview_preparation",
     "finish",
 }
+
+
+async def load_user_context(service: Any, user_id: int) -> str:
+    """저장된 관심사·물질화된 집계 프로필·최근 피드백을 합쳐 프롬프트용 컨텍스트 블록을 만든다.
+
+    관심 직무·기술은 저장값(사용자 수정본) 우선, 없으면 물질화된 UserProfile 집계값을 쓴다.
+    즉석 재계산 대신 저장된 프로필을 읽는다(집계는 분석 완료 시 upsert된다). 개인화는 fail-soft다:
+    조회에 실패해도 분석 자체는 막지 않되, 원인은 반드시 로깅한다.
+
+    Args:
+        service: AnalysisService 인스턴스(_preferences/_user_profiles/_analyses 보유).
+        user_id: 컨텍스트를 만들 사용자 ID.
+
+    Returns:
+        렌더된 개인화 컨텍스트 블록, 없거나 실패하면 빈 문자열.
+    """
+    try:
+        preferences = await service._preferences.get_by_user(user_id)
+        profile = await service._user_profiles.get_by_user(user_id)
+        feedback = await service._analyses.list_recent_feedback(user_id, limit=5)
+        return build_user_context(preferences, profile, feedback)
+    except Exception as exc:
+        logger.warning("개인화 컨텍스트 로드 실패, 빈 컨텍스트로 진행: user_id=%s error=%s", user_id, exc)
+        return ""
 
 
 def safe_analysis_route(state: Mapping[str, Any], *, allowed: set[str]) -> AnalysisNextSkill:
@@ -70,20 +95,30 @@ def build_analysis_graph(service: Any):
                 record.job_posting_document_id,
             )
             return {"error": "분석 대상 프로필을 찾을 수 없습니다", "next_skill": "persist_failed"}
+        # 여러 모집부문 공고는 이력서에 가장 맞는 포지션만 골라 채점(다른 직무 요건이 점수를 흐리지 않게).
+        position = select_best_position(getattr(job_posting, "positions", None) or [], resume.skills or [])
         return {
             "resume_profile": resume,
             "job_posting_profile": job_posting,
             "resume_input": resume_fit_input(resume),
-            "job_posting_input": job_posting_fit_input(job_posting),
+            "job_posting_input": job_posting_fit_input(job_posting, position=position),
+            "matched_position": (position or {}).get("title") if position else None,
+            "user_context": await load_user_context(service, record.user_id),
             "next_skill": "evaluate_fit",
         }
 
     async def evaluate_fit(state: AnalysisGraphState) -> AnalysisGraphState:
         try:
-            result = await analyze_fit(state["resume_input"], state["job_posting_input"])
+            result = await analyze_fit(
+                state["resume_input"],
+                state["job_posting_input"],
+                user_context=state.get("user_context", ""),
+            )
         except Exception as exc:
             logger.exception("적합도 분석 실패: analysis_id=%s", state["analysis_id"])
             return {"error": str(exc), "next_skill": "persist_failed"}
+        # 자동 선택된 포지션명은 시스템 메타데이터라 LLM 출력이 아니라 여기서 결정적으로 채운다.
+        result.matched_position = state.get("matched_position")
         return {"result": result, "next_skill": "persist_done"}
 
     async def persist_done(state: AnalysisGraphState) -> AnalysisGraphState:
@@ -179,11 +214,15 @@ def build_interview_preparation_graph(service: Any):
                 record.job_posting_document_id,
             )
             return {"completed": False, "error": "분석 대상 프로필을 찾을 수 없습니다", "next_skill": "finish"}
+        # 적합도 분석과 동일하게 이력서에 맞는 포지션 기준으로 면접 질문을 만든다.
+        position = select_best_position(getattr(job_posting, "positions", None) or [], resume.skills or [])
         return {
             "resume_profile": resume,
             "job_posting_profile": job_posting,
             "resume_input": resume_fit_input(resume),
-            "job_posting_input": job_posting_fit_input(job_posting),
+            "job_posting_input": job_posting_fit_input(job_posting, position=position),
+            "matched_position": (position or {}).get("title") if position else None,
+            "user_context": await load_user_context(service, record.user_id),
             "next_skill": "prepare_interview",
         }
 
@@ -193,6 +232,7 @@ def build_interview_preparation_graph(service: Any):
                 resume=state["resume_input"],
                 job_posting=state["job_posting_input"],
                 analysis_result=state["analysis_result"],
+                user_context=state.get("user_context", ""),
             )
         except Exception as exc:
             logger.exception("면접 준비 생성 실패: analysis_id=%s", state["analysis_id"])

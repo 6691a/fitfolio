@@ -1,9 +1,11 @@
 import time
+from typing import Any
 
 import httpx
 
 from app.schemas.analyses import AnalysisAccepted, AnalysisListItem, AnalysisStatus, InterviewPreparationResult
 from app.schemas.documents import ParseJobAccepted, ParseJobStatus
+from app.schemas.preferences import PreferencesOut
 from app.schemas.profiles import JobPostingListItem, ResumeListItem
 from streamlit_app.settings import f_settings
 from streamlit_app.state import auth_headers, store_auth_payload
@@ -25,7 +27,8 @@ def response_error_message(response: httpx.Response) -> str:
         detail 필드 또는 상태코드 기반 메시지.
     """
     try:
-        detail = response.json().get("detail")
+        payload = response.json()
+        detail = payload.get("detail") if isinstance(payload, dict) else None
     except ValueError:
         detail = None
     if isinstance(detail, list):
@@ -65,6 +68,20 @@ def _validation_error_message(error: object) -> str:
     return str(error.get("msg") or f"{label} 값이 올바르지 않습니다")
 
 
+def _api_url(path: str) -> str:
+    """API base URL과 path를 결합한다."""
+    return f"{f_settings.API_BASE_URL}{path}"
+
+
+def _request(method: str, path: str, *, timeout: float = 30, **kwargs: Any) -> httpx.Response:
+    """인증 헤더를 붙여 API를 호출하고 실패 응답은 사용자용 RuntimeError로 변환한다."""
+    headers = {**auth_headers(), **kwargs.pop("headers", {})}
+    response = httpx.request(method, _api_url(path), headers=headers, timeout=timeout, **kwargs)
+    if not response.is_success:
+        raise RuntimeError(response_error_message(response))
+    return response
+
+
 def submit_auth(path: str, payload: dict[str, str]) -> tuple[bool, str | None]:
     """인증 API에 요청을 보내고 성공 시 세션에 저장한다.
 
@@ -76,7 +93,7 @@ def submit_auth(path: str, payload: dict[str, str]) -> tuple[bool, str | None]:
         (성공 여부, 실패 메시지).
     """
     try:
-        response = httpx.post(f"{f_settings.API_BASE_URL}/auth/{path}", json=payload, timeout=30)
+        response = httpx.post(_api_url(f"/auth/{path}"), json=payload, timeout=30)
     except Exception as exc:
         return False, str(exc)
     if not response.is_success:
@@ -98,15 +115,13 @@ def upload_resume(data: dict[str, str], files: dict) -> int:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.post(
-        f"{f_settings.API_BASE_URL}/documents/resumes",
+    response = _request(
+        "POST",
+        "/documents/resumes",
         data=data,
         files=files,
-        headers=auth_headers(),
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(f"업로드 실패: {response.status_code} {response.text}")
     return ParseJobAccepted.model_validate_json(response.content).document_id
 
 
@@ -123,15 +138,13 @@ def upload_job_posting(data: dict[str, str], files: dict) -> int:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.post(
-        f"{f_settings.API_BASE_URL}/documents/job-postings",
+    response = _request(
+        "POST",
+        "/documents/job-postings",
         data=data,
         files=files or None,
-        headers=auth_headers(),
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(f"업로드 실패: {response.status_code} {response.text}")
     return ParseJobAccepted.model_validate_json(response.content).document_id
 
 
@@ -147,14 +160,12 @@ def fetch_resumes(limit: int = 50) -> list[ResumeListItem]:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.get(
-        f"{f_settings.API_BASE_URL}/documents/resumes",
+    response = _request(
+        "GET",
+        "/documents/resumes",
         params={"limit": limit},
-        headers=auth_headers(),
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(f"조회 실패: {response.status_code} {response.text}")
     return [ResumeListItem.model_validate(item) for item in response.json()]
 
 
@@ -171,9 +182,9 @@ def fetch_parse_result(document_id: int) -> dict | None:
         RuntimeError: 문서 파싱이 실패 상태로 끝난 경우.
     """
     while True:
-        status_response = httpx.get(
-            f"{f_settings.API_BASE_URL}/documents/parse/{document_id}",
-            headers=auth_headers(),
+        status_response = _request(
+            "GET",
+            f"/documents/parse/{document_id}",
             timeout=60,
         )
         job = ParseJobStatus.model_validate_json(status_response.content)
@@ -197,17 +208,15 @@ def create_analysis(resume_document_id: int, job_posting_document_id: int) -> in
     Raises:
         RuntimeError: API가 실패 응답을 준 경우(파싱 미완료 409 등).
     """
-    response = httpx.post(
-        f"{f_settings.API_BASE_URL}/analyses",
+    response = _request(
+        "POST",
+        "/analyses",
         json={
             "resume_document_id": resume_document_id,
             "job_posting_document_id": job_posting_document_id,
         },
-        headers=auth_headers(),
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(response_error_message(response))
     return AnalysisAccepted.model_validate_json(response.content).analysis_id
 
 
@@ -246,14 +255,12 @@ def fetch_analyses(limit: int = 50) -> list[AnalysisListItem]:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.get(
-        f"{f_settings.API_BASE_URL}/analyses",
+    response = _request(
+        "GET",
+        "/analyses",
         params={"limit": limit},
-        headers=auth_headers(),
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(response_error_message(response))
     return [AnalysisListItem.model_validate(item) for item in response.json()]
 
 
@@ -266,13 +273,11 @@ def delete_analysis(analysis_id: int) -> None:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.delete(
-        f"{f_settings.API_BASE_URL}/analyses/{analysis_id}",
-        headers=auth_headers(),
+    _request(
+        "DELETE",
+        f"/analyses/{analysis_id}",
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(response_error_message(response))
 
 
 def fetch_analysis(analysis_id: int) -> AnalysisStatus:
@@ -287,13 +292,11 @@ def fetch_analysis(analysis_id: int) -> AnalysisStatus:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.get(
-        f"{f_settings.API_BASE_URL}/analyses/{analysis_id}",
-        headers=auth_headers(),
+    response = _request(
+        "GET",
+        f"/analyses/{analysis_id}",
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(response_error_message(response))
     return AnalysisStatus.model_validate_json(response.content)
 
 
@@ -309,14 +312,71 @@ def create_interview_preparation(analysis_id: int) -> InterviewPreparationResult
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.post(
-        f"{f_settings.API_BASE_URL}/analyses/{analysis_id}/interview-prep",
-        headers=auth_headers(),
+    response = _request(
+        "POST",
+        f"/analyses/{analysis_id}/interview-prep",
         timeout=60,
     )
-    if not response.is_success:
-        raise RuntimeError(response_error_message(response))
     return InterviewPreparationResult.model_validate_json(response.content)
+
+
+def submit_analysis_feedback(analysis_id: int, rating: float, note: str) -> None:
+    """완료된 적합도 분석에 별점·메모 피드백을 남긴다.
+
+    Args:
+        analysis_id: 피드백을 남길 분석 ID.
+        rating: 별점(0.5~5.0).
+        note: 자유 피드백 메모.
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    _request(
+        "POST",
+        f"/analyses/{analysis_id}/feedback",
+        json={"rating": rating, "note": note},
+        timeout=30,
+    )
+
+
+def fetch_preferences() -> PreferencesOut:
+    """현재 사용자의 개인화 프로필을 조회한다.
+
+    Returns:
+        개인화 프로필(설정 전이면 모든 필드가 None).
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    response = _request(
+        "GET",
+        "/me/preferences",
+        timeout=30,
+    )
+    return PreferencesOut.model_validate_json(response.content)
+
+
+def save_preferences(interest_jobs: str, interest_skills: str, notes: str) -> None:
+    """현재 사용자의 관심 직무·기술 수정본을 저장한다(빈 문자열은 None으로 보낸다).
+
+    Args:
+        interest_jobs: 관심 직무(사용자 수정본).
+        interest_skills: 관심 기술/역량(사용자 수정본).
+        notes: 자유 기타 메모.
+
+    Raises:
+        RuntimeError: API가 실패 응답을 준 경우.
+    """
+    _request(
+        "PUT",
+        "/me/preferences",
+        json={
+            "interest_jobs": interest_jobs or None,
+            "interest_skills": interest_skills or None,
+            "notes": notes or None,
+        },
+        timeout=30,
+    )
 
 
 def fetch_job_postings(params: dict) -> list[JobPostingListItem]:
@@ -331,12 +391,10 @@ def fetch_job_postings(params: dict) -> list[JobPostingListItem]:
     Raises:
         RuntimeError: API가 실패 응답을 준 경우.
     """
-    response = httpx.get(
-        f"{f_settings.API_BASE_URL}/documents/job-postings",
+    response = _request(
+        "GET",
+        "/documents/job-postings",
         params=params,
-        headers=auth_headers(),
         timeout=30,
     )
-    if not response.is_success:
-        raise RuntimeError(f"조회 실패: {response.status_code} {response.text}")
     return [JobPostingListItem.model_validate(item) for item in response.json()]

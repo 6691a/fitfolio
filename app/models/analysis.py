@@ -42,6 +42,11 @@ class FitAnalysis(BaseModel):
         nullable=True,
         comment="InterviewPreparationResult 직렬화 JSON. 사용자가 요청한 뒤 생성·캐시한다.",
     )
+    feedback: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="사용자 피드백 {rating: up|down, note: str}. 다음 분석 개인화에 쓴다. 없으면 NULL.",
+    )
     error: Mapped[str | None] = mapped_column(
         String(1000),
         nullable=True,

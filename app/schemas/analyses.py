@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.documents import ParseStatus
 
@@ -13,6 +13,10 @@ class FitDimension(BaseModel):
 class FitAnalysisResult(BaseModel):
     overall_score: int = Field(ge=0, le=100, description="종합 적합도 점수(0~100 정수)")
     summary: str = Field(description="종합 평가 한 줄 요약(한국어)")
+    matched_position: str | None = Field(
+        default=None,
+        description="여러 모집부문 공고에서 자동 선택된 포지션명. 시스템이 채우므로 모델은 비워둔다.",
+    )
     matched_skills: list[str] = Field(
         default_factory=list,
         description="이력서 skills 목록에 실제로 존재하며 공고 요건과 관련된 스킬만",
@@ -74,6 +78,19 @@ class InterviewPreparationResult(BaseModel):
 class AnalysisCreateRequest(BaseModel):
     resume_document_id: int
     job_posting_document_id: int
+
+
+class AnalysisFeedbackRequest(BaseModel):
+    rating: float = Field(ge=0.5, le=5.0, description="별점(0.5~5.0, 0.5 단위)")
+    note: str = Field(default="", max_length=1000, description="자유 피드백 메모(선택)")
+
+    @field_validator("rating")
+    @classmethod
+    def _half_step(cls, value: float) -> float:
+        """별점이 0.5 단위인지 검증한다."""
+        if round(value * 2) != value * 2:
+            raise ValueError("별점은 0.5 단위여야 합니다")
+        return value
 
 
 class AnalysisAccepted(BaseModel):

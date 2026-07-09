@@ -84,6 +84,41 @@ class AnalysesRepository:
             rows = await session.execute(stmt)
             return [(row[0], row[1], row[2], row[3], row[4]) for row in rows.all()]
 
+    async def list_recent_analyzed_profiles(
+        self,
+        user_id: int,
+        *,
+        limit: int = 30,
+    ) -> list[tuple[JobPostingProfile, ResumeProfile | None]]:
+        """사용자가 최근 분석한 (채용공고 프로필, 이력서 프로필) 목록을 최신순으로 조회한다.
+
+        관심 직무·기술 자동 추출(파생 개인화)의 원재료다. 이력서 프로필이 그 사이 삭제됐을 수
+        있으므로 outer join으로 이력서 쪽 NULL을 허용한다.
+
+        Args:
+            user_id: 조회할 사용자 ID.
+            limit: 최대 결과 수(최근 분석 window).
+
+        Returns:
+            (채용공고 프로필, 이력서 프로필 또는 None) 튜플 목록(분석 생성일 내림차순).
+        """
+        stmt = (
+            select(JobPostingProfile, ResumeProfile)
+            .select_from(FitAnalysis)
+            .join(JobPostingProfile, JobPostingProfile.document_id == FitAnalysis.job_posting_document_id)
+            .outerjoin(ResumeProfile, ResumeProfile.document_id == FitAnalysis.resume_document_id)
+            .where(
+                FitAnalysis.user_id == user_id,
+                FitAnalysis.status == ParseStatus.DONE,
+                FitAnalysis.deleted_at.is_(None),
+            )
+            .order_by(FitAnalysis.created_at.desc())
+            .limit(limit)
+        )
+        async with self._session_factory() as session:
+            rows = await session.execute(stmt)
+            return [(row[0], row[1]) for row in rows.all()]
+
     async def get(self, analysis_id: int) -> FitAnalysis | None:
         """분석 ID로 삭제되지 않은 적합도 분석 행을 조회한다.
 
@@ -128,6 +163,57 @@ class AnalysesRepository:
             await session.commit()
             return deleted_id is not None
 
+    async def save_feedback(self, analysis_id: int, *, user_id: int, feedback: dict) -> bool:
+        """완료된 분석에 소유자가 남긴 피드백을 저장한다(소유권 조건부 단일 UPDATE).
+
+        Args:
+            analysis_id: 피드백을 저장할 분석 ID.
+            user_id: 요청한 사용자 ID(소유권 조건).
+            feedback: 저장할 피드백 dict({rating, note}).
+
+        Returns:
+            저장된 행이 있으면 True, 없거나 타인 소유·미완료·삭제됐으면 False.
+        """
+        stmt = (
+            update(FitAnalysis)
+            .where(
+                FitAnalysis.id == analysis_id,
+                FitAnalysis.user_id == user_id,
+                FitAnalysis.status == ParseStatus.DONE,
+                FitAnalysis.deleted_at.is_(None),
+            )
+            .values(feedback=feedback)
+            .returning(FitAnalysis.id)
+        )
+        async with self._session_factory() as session:
+            saved_id = await session.scalar(stmt)
+            await session.commit()
+            return saved_id is not None
+
+    async def list_recent_feedback(self, user_id: int, *, limit: int = 5) -> list[dict]:
+        """사용자가 최근 남긴 피드백 목록을 최신순으로 조회한다(개인화 메모리용).
+
+        Args:
+            user_id: 피드백을 조회할 사용자 ID.
+            limit: 최대 결과 수.
+
+        Returns:
+            피드백 dict 목록(생성일 내림차순). 없으면 빈 목록.
+        """
+        stmt = (
+            select(FitAnalysis.feedback)
+            .where(
+                FitAnalysis.user_id == user_id,
+                FitAnalysis.feedback.is_not(None),
+                FitAnalysis.deleted_at.is_(None),
+            )
+            .order_by(FitAnalysis.created_at.desc())
+            .limit(limit)
+        )
+        async with self._session_factory() as session:
+            rows = await session.scalars(stmt)
+            return [feedback for feedback in rows.all() if feedback]
+
     async def mark_started(self, analysis_id: int) -> None:
         """분석 상태를 started로 바꾼다.
 
@@ -171,7 +257,12 @@ class AnalysesRepository:
             **values: 갱신할 필드-값 쌍.
         """
         async with self._session_factory() as session:
-            record = await session.scalar(select(FitAnalysis).where(FitAnalysis.id == analysis_id))
+            record = await session.scalar(
+                select(FitAnalysis).where(
+                    FitAnalysis.id == analysis_id,
+                    FitAnalysis.deleted_at.is_(None),
+                )
+            )
             if record is None:
                 return
             for field, value in values.items():

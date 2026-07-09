@@ -257,3 +257,64 @@ async def test_prepare_interview_endpoint_returns_409_when_analysis_not_done():
             )
 
     assert response.status_code == status.HTTP_409_CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_submit_feedback_endpoint_delegates_to_service():
+    class FakeAnalysisService:
+        async def submit_feedback(self, *, analysis_id, user_id, rating, note):
+            assert (analysis_id, user_id, rating, note) == (3, 1, 4.5, "강점을 더 구체적으로")
+            return True
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with (
+            container.analysis_service.override(FakeAnalysisService()),
+            container.auth_service.override(FakeAuthService()),
+        ):
+            response = await client.post(
+                "/analyses/3/feedback",
+                headers={"Authorization": "Bearer valid-token"},
+                json={"rating": 4.5, "note": "강점을 더 구체적으로"},
+            )
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+
+
+@pytest.mark.asyncio
+async def test_submit_feedback_endpoint_returns_404_when_missing():
+    class FakeAnalysisService:
+        async def submit_feedback(self, **kwargs):
+            return False
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with (
+            container.analysis_service.override(FakeAnalysisService()),
+            container.auth_service.override(FakeAuthService()),
+        ):
+            response = await client.post(
+                "/analyses/999/feedback",
+                headers={"Authorization": "Bearer valid-token"},
+                json={"rating": 3.0, "note": ""},
+            )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_submit_feedback_endpoint_rejects_non_half_step_rating():
+    class FakeAnalysisService:
+        async def submit_feedback(self, **kwargs):  # pragma: no cover - 검증에서 막혀 호출되지 않음
+            raise AssertionError("검증을 통과하면 안 된다")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with (
+            container.analysis_service.override(FakeAnalysisService()),
+            container.auth_service.override(FakeAuthService()),
+        ):
+            response = await client.post(
+                "/analyses/3/feedback",
+                headers={"Authorization": "Bearer valid-token"},
+                json={"rating": 4.3, "note": ""},
+            )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
